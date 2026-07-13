@@ -1,3 +1,4 @@
+import gzip
 import socket
 import ssl
 import time
@@ -77,6 +78,7 @@ class URL:
         headers = {
             "Host": self.host,
             "Connection": "keep-alive",
+            "Accept-Encoding": "gzip",
             #  Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 크롬은 매우 복잡
             "User-Agent": "baesh",
         }
@@ -95,14 +97,19 @@ class URL:
                 break
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
-        assert "transfer-encoding" not in response_headers
-        assert "content-encoding" not in response_headers
 
-        if "content-length" in response_headers:
+        if response_headers.get("transfer-encoding") == "chunked":
+            body_bytes = self.read_chunked(response)
+        elif "content-length" in response_headers:
             content_length = int(response_headers["content-length"])
-            body = response.read(content_length).decode("utf-8")
+            body_bytes = response.read(content_length)
         else:
-            body = ""
+            body_bytes = b""
+
+        if response_headers.get("content-encoding") == "gzip":
+            body_bytes = gzip.decompress(body_bytes)
+
+        body = body_bytes.decode("utf-8")
 
         if status.startswith("3") and "location" in response_headers:
             if max_redirects <= 0:
@@ -132,6 +139,19 @@ class URL:
                 URL.cache[cache_key] = (result_body, expiry)
 
         return result_body
+
+    def read_chunked(self, response):
+        data = b""
+        while True:
+            size_line = response.readline().decode("utf-8")
+            # "1a; 확장자" 형태일 수 있어 세미콜론 앞부분만 사용
+            size = int(size_line.split(";")[0].strip(), 16)
+            if size == 0:
+                response.readline()  # 마지막 청크 뒤의 빈 줄(\r\n)
+                break
+            data += response.read(size)
+            response.readline()  # 각 청크 데이터 뒤의 \r\n
+        return data
 
     def request_file(self):
         with open(self.path, "r", encoding="utf-8") as f:

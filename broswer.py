@@ -28,8 +28,16 @@ class URL:
             ctx = ssl.create_default_context()
             s = ctx.wrap_socket(s, server_hostname=self.host)
 
-        request = "GET {} HTTP/1.0\r\n".format(self.path)
-        request += "Host: {}\r\n".format(self.host)
+        headers = {
+            "Host": self.host,
+            # "Connection": "close"로 인해 다음 요청을 기다림
+            "Connection": "close",
+            #  Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 크롬은 매우 복잡
+            "User-Agent": "baesh",
+        }
+        request = "GET {} HTTP/1.1\r\n".format(self.path)
+        for header, value in headers.items():
+            request += "{}: {}\r\n".format(header, value)
         request += "\r\n"
         s.send(request.encode("utf-8"))
         response = s.makefile("r", encoding="utf-8", newline="\r\n")

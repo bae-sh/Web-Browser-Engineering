@@ -4,6 +4,12 @@ import ssl
 
 class URL:
     def __init__(self, url):
+        if url.startswith("data:"):
+            self.scheme = "data"
+            # data:text/html,Hello 이런 타입으로 들어오게 됨.
+            self.mediatype, self.data = url[len("data:") :].split(",", 1)
+            return
+
         self.scheme, url = url.split("://", 1)
         assert self.scheme in ["http", "https", "file"]
 
@@ -25,6 +31,9 @@ class URL:
             self.port = int(self.port)
 
     def request(self):
+        if self.scheme == "data":
+            return self.data
+
         if self.scheme == "file":
             return self.request_file()
 
@@ -95,5 +104,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         load(URL(sys.argv[1]))
     else:
-        default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test.html")
+        default_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "test.html"
+        )
         load(URL("file://" + default_path))

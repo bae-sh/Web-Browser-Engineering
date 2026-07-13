@@ -38,7 +38,7 @@ class URL:
             self.host, self.port = self.host.split(":", 1)
             self.port = int(self.port)
 
-    def request(self):
+    def request(self, max_redirects=10):
         if self.scheme == "data":
             return self.data
 
@@ -73,8 +73,8 @@ class URL:
         request += "\r\n"
         s.send(request.encode("utf-8"))
 
-        status = response.readline().decode("utf-8")
-        version, status, explanation = status.split(" ", 2)
+        status_line = response.readline().decode("utf-8")
+        version, status, explanation = status_line.split(" ", 2)
         response_headers = {}
         while True:
             line = response.readline().decode("utf-8")
@@ -85,8 +85,21 @@ class URL:
         assert "transfer-encoding" not in response_headers
         assert "content-encoding" not in response_headers
 
-        content_length = int(response_headers["content-length"])
-        body = response.read(content_length).decode("utf-8")
+        if "content-length" in response_headers:
+            content_length = int(response_headers["content-length"])
+            body = response.read(content_length).decode("utf-8")
+        else:
+            body = ""
+
+        if status.startswith("3") and "location" in response_headers:
+            if max_redirects <= 0:
+                raise Exception("Too many redirects")
+            location = response_headers["location"]
+            if "://" not in location:
+                location = "{}://{}:{}{}".format(
+                    self.scheme, self.host, self.port, location
+                )
+            return URL(location).request(max_redirects - 1)
 
         return body
 

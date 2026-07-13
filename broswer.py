@@ -3,6 +3,9 @@ import ssl
 
 
 class URL:
+    # (scheme, host, port) -> (socket, makefile 객체)
+    connections = {}
+
     def __init__(self, url):
         self.view_source = False
         if url.startswith("view-source:"):
@@ -42,18 +45,25 @@ class URL:
         if self.scheme == "file":
             return self.request_file()
 
-        s = socket.socket(
-            family=socket.AF_INET, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
-        )
-        s.connect((self.host, self.port))
-        if self.scheme == "https":
-            ctx = ssl.create_default_context()
-            s = ctx.wrap_socket(s, server_hostname=self.host)
+        key = (self.scheme, self.host, self.port)
+        if key in URL.connections:
+            s, response = URL.connections[key]
+        else:
+            s = socket.socket(
+                family=socket.AF_INET,
+                type=socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP,
+            )
+            s.connect((self.host, self.port))
+            if self.scheme == "https":
+                ctx = ssl.create_default_context()
+                s = ctx.wrap_socket(s, server_hostname=self.host)
+            response = s.makefile("rb")
+            URL.connections[key] = (s, response)
 
         headers = {
             "Host": self.host,
-            # "Connection": "close"로 인해 다음 요청을 기다림
-            "Connection": "close",
+            "Connection": "keep-alive",
             #  Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 크롬은 매우 복잡
             "User-Agent": "baesh",
         }
@@ -62,12 +72,12 @@ class URL:
             request += "{}: {}\r\n".format(header, value)
         request += "\r\n"
         s.send(request.encode("utf-8"))
-        response = s.makefile("r", encoding="utf-8", newline="\r\n")
-        status = response.readline()
+
+        status = response.readline().decode("utf-8")
         version, status, explanation = status.split(" ", 2)
         response_headers = {}
         while True:
-            line = response.readline()
+            line = response.readline().decode("utf-8")
             if line == "\r\n":
                 break
             header, value = line.split(":", 1)
@@ -75,8 +85,8 @@ class URL:
         assert "transfer-encoding" not in response_headers
         assert "content-encoding" not in response_headers
 
-        body = response.read()
-        s.close()
+        content_length = int(response_headers["content-length"])
+        body = response.read(content_length).decode("utf-8")
 
         return body
 

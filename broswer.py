@@ -1,10 +1,13 @@
 import socket
 import ssl
+import time
 
 
 class URL:
     # (scheme, host, port) -> (socket, makefile 객체)
     connections = {}
+    # "scheme://host:port/path" -> (body, expiry). expiry가 None이면 무기한
+    cache = {}
 
     def __init__(self, url):
         self.view_source = False
@@ -44,6 +47,16 @@ class URL:
 
         if self.scheme == "file":
             return self.request_file()
+
+        cache_key = "{}://{}:{}{}".format(
+            self.scheme, self.host, self.port, self.path
+        )
+        now = time.time()
+        if cache_key in URL.cache:
+            cached_body, expiry = URL.cache[cache_key]
+            if expiry is None or now < expiry:
+                return cached_body
+            del URL.cache[cache_key]
 
         key = (self.scheme, self.host, self.port)
         if key in URL.connections:
@@ -99,9 +112,26 @@ class URL:
                 location = "{}://{}:{}{}".format(
                     self.scheme, self.host, self.port, location
                 )
-            return URL(location).request(max_redirects - 1)
+            result_body = URL(location).request(max_redirects - 1)
+        else:
+            result_body = body
 
-        return body
+        if status in ["200", "301", "404"]:
+            should_cache = True
+            expiry = None
+            if "cache-control" in response_headers:
+                directives = response_headers["cache-control"].lower().split(",")
+                for directive in directives:
+                    directive = directive.strip()
+                    if directive.startswith("max-age="):
+                        expiry = now + int(directive[len("max-age=") :])
+                    else:
+                        # no-store를 포함해, max-age 외의 값이면 캐시하지 않음
+                        should_cache = False
+            if should_cache:
+                URL.cache[cache_key] = (result_body, expiry)
+
+        return result_body
 
     def request_file(self):
         with open(self.path, "r", encoding="utf-8") as f:

@@ -82,6 +82,7 @@ class URL:
 
 def show(body):
     in_tag = False
+    text = ""
 
     for c in body:
         if c == "<":
@@ -89,7 +90,10 @@ def show(body):
         elif c == ">":
             in_tag = False
         elif not in_tag:
-            print(c, end="")
+            text += c
+
+    text = text.replace("&lt;", "<").replace("&gt;", ">")
+    print(text, end="")
 
 
 def load(url):

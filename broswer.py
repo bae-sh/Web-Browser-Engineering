@@ -4,6 +4,11 @@ import ssl
 
 class URL:
     def __init__(self, url):
+        self.view_source = False
+        if url.startswith("view-source:"):
+            self.view_source = True
+            url = url[len("view-source:") :]
+
         if url.startswith("data:"):
             self.scheme = "data"
             # data:text/html,Hello 이런 타입으로 들어오게 됨.
@@ -98,7 +103,10 @@ def show(body):
 
 def load(url):
     body = url.request()
-    show(body)
+    if url.view_source:
+        print(body, end="")
+    else:
+        show(body)
 
 
 if __name__ == "__main__":

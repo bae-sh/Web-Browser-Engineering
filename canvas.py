@@ -7,45 +7,53 @@ HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
 
 
-def layout(text):
-    display_list = []
-    cursor_x, cursor_y = HSTEP, VSTEP
-    for c in text:
-        if c == "\n":
-            cursor_y += VSTEP * 1.5
-            cursor_x = HSTEP
-            continue
-        display_list.append((cursor_x, cursor_y, c))
-        cursor_x += HSTEP
-        if cursor_x >= WIDTH - HSTEP:
-            cursor_y += VSTEP
-            cursor_x = HSTEP
-
-    return display_list
-
-
 class Browser:
     def __init__(self):
         self.window = tkinter.Tk()  # 창 생성
+        self.width, self.height = WIDTH, HEIGHT
         self.canvas = tkinter.Canvas(
-            self.window, width=WIDTH, height=HEIGHT
+            self.window, width=self.width, height=self.height
         )  # 창에 대한 캔버스 생성
-        self.canvas.pack()
+        self.canvas.pack(fill=tkinter.BOTH, expand=1)  # 창 크기에 맞춰 캔버스도 늘어남
         self.scroll = 0
+        self.text = ""
+        self.display_list = []
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrollup)
         self.window.bind("<MouseWheel>", self.mousewheel)
+        self.canvas.bind("<Configure>", self.resize)
+
+    def layout(self, text):
+        display_list = []
+        cursor_x, cursor_y = HSTEP, VSTEP
+        for c in text:
+            if c == "\n":
+                cursor_y += VSTEP * 1.5
+                cursor_x = HSTEP
+                continue
+            display_list.append((cursor_x, cursor_y, c))
+            cursor_x += HSTEP
+            if cursor_x >= self.width - HSTEP:
+                cursor_y += VSTEP
+                cursor_x = HSTEP
+        return display_list
 
     def load(self, url):
         body = URL(url).request()
-        text = lex(body)
-        self.display_list = layout(text)
+        self.text = lex(body)
+        self.display_list = self.layout(self.text)
+        self.draw()
+
+    def resize(self, e):
+        self.width, self.height = e.width, e.height
+        self.display_list = self.layout(self.text)
+        self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
     def draw(self):
         self.canvas.delete("all")
         for x, y, c in self.display_list:
-            if y > self.scroll + HEIGHT:
+            if y > self.scroll + self.height:
                 continue
             if y + VSTEP < self.scroll:
                 continue
@@ -54,7 +62,7 @@ class Browser:
     def max_scroll(self):
         if not self.display_list:
             return 0
-        return max(0, self.display_list[-1][1] + VSTEP - HEIGHT)
+        return max(0, self.display_list[-1][1] + VSTEP - self.height)
 
     def scrolldown(self, e):
         self.scroll = min(self.scroll + SCROLL_STEP, self.max_scroll())

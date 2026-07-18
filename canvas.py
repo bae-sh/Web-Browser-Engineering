@@ -5,6 +5,7 @@ from broswer import URL, lex
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
+SCROLLBAR_WIDTH = 12
 
 
 class Browser:
@@ -58,11 +59,33 @@ class Browser:
             if y + VSTEP < self.scroll:
                 continue
             self.canvas.create_text(x, y - self.scroll, text=c)
+        self.draw_scrollbar()
 
-    def max_scroll(self):
+    def draw_scrollbar(self):
+        doc_height = self.document_height()
+        # 문서 전체가 화면에 들어오면 스크롤바를 그리지 않음
+        if doc_height <= self.height:
+            return
+        # 보이는 비율만큼 스크롤바 손잡이(thumb) 크기/위치를 정함
+        thumb_height = self.height * self.height / doc_height
+        thumb_top = self.height * self.scroll / doc_height
+        x1 = self.width - SCROLLBAR_WIDTH
+        self.canvas.create_rectangle(
+            x1,
+            thumb_top,
+            self.width,
+            thumb_top + thumb_height,
+            fill="blue",
+            outline="blue",
+        )
+
+    def document_height(self):
         if not self.display_list:
             return 0
-        return max(0, self.display_list[-1][1] + VSTEP - self.height)
+        return self.display_list[-1][1] + VSTEP
+
+    def max_scroll(self):
+        return max(0, self.document_height() - self.height)
 
     def scrolldown(self, e):
         self.scroll = min(self.scroll + SCROLL_STEP, self.max_scroll())

@@ -33,6 +33,8 @@ class Browser:
         self.canvas.pack()
         self.scroll = 0
         self.window.bind("<Down>", self.scrolldown)
+        self.window.bind("<Up>", self.scrollup)
+        self.window.bind("<MouseWheel>", self.mousewheel)
 
     def load(self, url):
         body = URL(url).request()
@@ -49,8 +51,21 @@ class Browser:
                 continue
             self.canvas.create_text(x, y - self.scroll, text=c)
 
+    def max_scroll(self):
+        if not self.display_list:
+            return 0
+        return max(0, self.display_list[-1][1] + VSTEP - HEIGHT)
+
     def scrolldown(self, e):
-        self.scroll += SCROLL_STEP
+        self.scroll = min(self.scroll + SCROLL_STEP, self.max_scroll())
+        self.draw()
+
+    def scrollup(self, e):
+        self.scroll = max(0, self.scroll - SCROLL_STEP)
+        self.draw()
+
+    def mousewheel(self, e):
+        self.scroll = max(0, min(self.scroll - e.delta, self.max_scroll()))
         self.draw()
 
 

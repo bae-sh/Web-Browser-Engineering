@@ -49,9 +49,7 @@ class URL:
         if self.scheme == "file":
             return self.request_file()
 
-        cache_key = "{}://{}:{}{}".format(
-            self.scheme, self.host, self.port, self.path
-        )
+        cache_key = "{}://{}:{}{}".format(self.scheme, self.host, self.port, self.path)
         now = time.time()
         if cache_key in URL.cache:
             cached_body, expiry = URL.cache[cache_key]
@@ -158,8 +156,7 @@ class URL:
             return f.read()
 
 
-def show(body):
-    in_tag = False
+def lex(body):
     text = ""
 
     for c in body:
@@ -170,8 +167,7 @@ def show(body):
         elif not in_tag:
             text += c
 
-    text = text.replace("&lt;", "<").replace("&gt;", ">")
-    print(text, end="")
+    return text
 
 
 def load(url):

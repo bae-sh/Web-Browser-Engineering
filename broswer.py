@@ -6,6 +6,9 @@ import time
 
 # pytk canvas.py http://browser.engineering
 # python canvas.py http://browser.engineering
+
+
+# pytk canvas.py --tree "file://$PWD/test.html"
 class URL:
     # (scheme, host, port) -> (socket, makefile 객체)
     connections = {}
@@ -229,8 +232,19 @@ class HTMLParser:
         # add_text/add_tag가 트리에 노드를 붙인다.
         text = ""
         in_tag = False
-        for c in self.body:
-            if c == "<":
+        i = 0
+        while i < len(self.body):
+            c = self.body[i]
+            # 4-3: 스크립트 본문에서는 </script>만 태그로 인정하고, 그 외의 < 와 >는
+            # 자바스크립트의 비교 연산자이므로 전부 그냥 글자로 취급한다.
+            if (
+                not in_tag
+                and bool(self.unfinished)
+                and self.unfinished[-1].tag == "script"
+                and not self.body[i : i + len("</script")].casefold() == "</script"
+            ):
+                text += c
+            elif c == "<":
                 in_tag = True
                 if text:
                     self.add_text(text)
@@ -241,6 +255,7 @@ class HTMLParser:
                 text = ""
             else:
                 text += c
+            i += 1
         if not in_tag and text:
             self.add_text(text)
         return self.finish()

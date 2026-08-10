@@ -1,7 +1,7 @@
 import tkinter
 import tkinter.font
 
-from broswer import URL, lex, Text, Tag
+from broswer import URL, HTMLParser, Text, print_tree
 
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
@@ -31,7 +31,7 @@ def get_font(size, weight, style, family=None):
 
 
 class Layout:
-    def __init__(self, tokens, width):
+    def __init__(self, tree, width):
         self.width = width
         self.display_list = []
         self.cursor_x = HSTEP
@@ -41,40 +41,51 @@ class Layout:
         self.size = 12
         self.in_pre = False
         self.line = []  # 한 줄에 들어갈 단어 버퍼 (x, word, font)
-        for tok in tokens:
-            self.token(tok)
+        self.recurse(tree)
         self.flush()
 
-    def token(self, tok):
-        if isinstance(tok, Text):
-            self.text(tok)
-        elif tok.tag == "i":
+    def recurse(self, tree):
+        # 토큰 목록을 순서대로 훑는 대신 트리를 깊이 우선으로 내려간다.
+        # 자식을 방문하기 전후로 open_tag/close_tag를 부르므로, 열고 닫는 순서는
+        # 토큰 방식과 동일하게 유지된다.
+        if isinstance(tree, Text):
+            self.text(tree)
+        else:
+            self.open_tag(tree.tag)
+            for child in tree.children:
+                self.recurse(child)
+            self.close_tag(tree.tag)
+
+    def open_tag(self, tag):
+        if tag == "i":
             self.style = "italic"
-        elif tok.tag == "/i":
-            self.style = "roman"
-        elif tok.tag == "b":
+        elif tag == "b":
             self.weight = "bold"
-        elif tok.tag == "/b":
-            self.weight = "normal"
-        elif tok.tag == "small":
+        elif tag == "small":
             self.size -= 2
-        elif tok.tag == "/small":
-            self.size += 2
-        elif tok.tag == "big":
+        elif tag == "big":
             self.size += 4
-        elif tok.tag == "/big":
-            self.size -= 4
-        elif tok.tag == "br":
+        elif tag == "br":
             self.flush()
-        elif tok.tag == "/p":
-            self.flush()
-            self.cursor_y += VSTEP
-        elif tok.tag == "pre":
+        elif tag == "pre":
             # pre 진입 전까지 쌓인 일반 텍스트 줄을 먼저 확정하고, 이후 text()가
             # pre_text()로 분기하도록 in_pre를 켠다.
             self.flush()
             self.in_pre = True
-        elif tok.tag == "/pre":
+
+    def close_tag(self, tag):
+        if tag == "i":
+            self.style = "roman"
+        elif tag == "b":
+            self.weight = "normal"
+        elif tag == "small":
+            self.size += 2
+        elif tag == "big":
+            self.size -= 4
+        elif tag == "p":
+            self.flush()
+            self.cursor_y += VSTEP
+        elif tag == "pre":
             # pre 안에서 쌓인 마지막 줄을 확정하고 일반 텍스트 처리로 되돌린다.
             self.flush()
             self.in_pre = False
@@ -156,7 +167,7 @@ class Browser:
         )  # 창에 대한 캔버스 생성
         self.canvas.pack(fill=tkinter.BOTH, expand=1)  # 창 크기에 맞춰 캔버스도 늘어남
         self.scroll = 0
-        self.tokens = []
+        self.nodes = None
         self.display_list = []
         self.window.bind("<Down>", self.scrolldown)
         self.window.bind("<Up>", self.scrollup)
@@ -165,13 +176,14 @@ class Browser:
 
     def load(self, url):
         body = URL(url).request()
-        self.tokens = lex(body)
-        self.display_list = Layout(self.tokens, self.width).display_list
+        self.nodes = HTMLParser(body).parse()
+        self.display_list = Layout(self.nodes, self.width).display_list
         self.draw()
 
     def resize(self, e):
         self.width, self.height = e.width, e.height
-        self.display_list = Layout(self.tokens, self.width).display_list
+        if self.nodes is not None:
+            self.display_list = Layout(self.nodes, self.width).display_list
         self.scroll = min(self.scroll, self.max_scroll())
         self.draw()
 
@@ -230,5 +242,11 @@ class Browser:
 if __name__ == "__main__":
     import sys
 
-    Browser().load(sys.argv[1])
-    tkinter.mainloop()
+    args = sys.argv[1:]
+    if "--tree" in args:
+        # 창을 띄우지 않고 파싱된 HTML 트리만 출력한다(파서 디버깅용)
+        args.remove("--tree")
+        print_tree(HTMLParser(URL(args[0]).request()).parse())
+    else:
+        Browser().load(args[0])
+        tkinter.mainloop()

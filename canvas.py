@@ -50,6 +50,12 @@ BLOCK_ELEMENTS = [
     "summary",
 ]
 
+
+def is_block_level(node):
+    # 블록급인지 인라인급인지 판정한다. 태그 없는 맨 텍스트도 인라인급이다.
+    return isinstance(node, Element) and node.tag in BLOCK_ELEMENTS
+
+
 FONTS = {}
 
 
@@ -132,7 +138,7 @@ class DocumentLayout:
         self.height = None
 
     def layout(self):
-        child = BlockLayout(self.node, self, None)
+        child = BlockLayout([self.node], self, None)
         self.children.append(child)
         # 글자가 창 가장자리에 붙어 잘리지 않도록 좌우/위아래로 여백을 둔다
         self.width = self.window_width - 2 * HSTEP
@@ -151,8 +157,8 @@ class DocumentLayout:
 
 
 class BlockLayout:
-    def __init__(self, node, parent, previous):
-        self.node = node
+    def __init__(self, nodes, parent, previous):
+        self.nodes = nodes
         self.parent = parent
         # 이전 형제. 세로 위치를 정할 때 "형제 바로 아래"를 계산하는 데 쓴다.
         self.previous = previous
@@ -166,18 +172,24 @@ class BlockLayout:
     def layout_mode(self):
         # 자식에 블록 요소가 하나라도 있으면 블록 모드(자식을 세로로 쌓기),
         # 아니면 인라인 모드(글자를 줄 단위로 흘리기)로 처리한다.
-        if isinstance(self.node, Text):
+        if len(self.nodes) > 1:
+            # 노드가 여럿이면 부모가 인라인급 형제들을 묶어 만든 익명 블록이다
             return "inline"
-        elif any(
-            isinstance(child, Element) and child.tag in BLOCK_ELEMENTS
-            for child in self.node.children
-        ):
-            # 블록과 텍스트가 섞여 있으면 작성자의 실수로 보고 블록 모드로 복구한다
+        if isinstance(self.nodes[0], Text):
+            return "inline"
+        elif any(is_block_level(child) for child in self.nodes[0].children):
             return "block"
-        elif self.node.children:
+        elif self.nodes[0].children:
             return "inline"
         else:
             return "block"
+
+    def add_block(self, nodes, previous):
+        # 익명 블록이든 평범한 블록이든 형제 하나로 세어야 다음 형제의 y가 맞는다.
+        # 그래서 만든 블록을 돌려주고, 호출한 쪽이 previous를 갱신하게 한다.
+        block = BlockLayout(nodes, self, previous)
+        self.children.append(block)
+        return block
 
     def layout(self):
         # 계산 순서가 중요하다. width/x/y는 부모와 이전 형제를 읽으므로 자식보다
@@ -191,12 +203,24 @@ class BlockLayout:
 
         mode = self.layout_mode()
         if mode == "block":
-            # HTML 트리(node.children)를 읽어 레이아웃 트리(self.children)를 만든다
+            # HTML 트리(node.children)를 읽어 레이아웃 트리(self.children)를 만든다.
+            # 블록 모드에서는 노드가 항상 하나이므로 nodes[0]의 자식을 훑는다.
+            #
+            # 인라인급 자식은 연속된 구간 전체가 한 줄로 이어져야 하므로 즉시
+            # 블록을 만들지 않고 pending에 모아 둔다. 블록급 자식을 만나거나
+            # 자식이 다 끝나면 그때 모아 둔 것을 익명 블록 하나로 닫는다.
             previous = None
-            for child in self.node.children:
-                block = BlockLayout(child, self, previous)
-                self.children.append(block)
-                previous = block
+            pending = []
+            for child in self.nodes[0].children:
+                if is_block_level(child):
+                    if pending:
+                        previous = self.add_block(pending, previous)
+                        pending = []
+                    previous = self.add_block([child], previous)
+                else:
+                    pending.append(child)
+            if pending:
+                previous = self.add_block(pending, previous)
         else:
             # cursor는 페이지 절대 좌표가 아니라 이 블록 안의 상대 좌표다
             self.cursor_x = 0
@@ -206,7 +230,8 @@ class BlockLayout:
             self.size = 12
             self.in_pre = False
             self.line = []  # 한 줄에 들어갈 단어 버퍼 (상대 x, word, font)
-            self.recurse(self.node)
+            for node in self.nodes:
+                self.recurse(node)
             self.flush()
 
         for child in self.children:
@@ -329,7 +354,7 @@ class BlockLayout:
     def paint(self):
         cmds = []
         # 배경을 글자보다 먼저 넣어야 글자 아래에 깔린다
-        if isinstance(self.node, Element) and self.node.tag == "pre":
+        if isinstance(self.nodes[0], Element) and self.nodes[0].tag == "pre":
             x2, y2 = self.x + self.width, self.y + self.height
             cmds.append(DrawRect(self.x, self.y, x2, y2, "gray"))
         if self.layout_mode() == "inline":
@@ -338,9 +363,12 @@ class BlockLayout:
         return cmds
 
     def __repr__(self):
-        name = self.node.tag if isinstance(self.node, Element) else "text"
+        # 익명 블록은 노드가 여럿이므로 담고 있는 것을 모두 나열한다
+        names = ",".join(
+            node.tag if isinstance(node, Element) else "text" for node in self.nodes
+        )
         return "BlockLayout[{}](<{}>, x={}, y={}, width={}, height={})".format(
-            self.layout_mode(), name, self.x, self.y, self.width, self.height
+            self.layout_mode(), names, self.x, self.y, self.width, self.height
         )
 
 

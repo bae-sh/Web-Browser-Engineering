@@ -294,16 +294,35 @@ class HTMLParser:
         return self.finish()
 
     def get_attributes(self, text):
-        # 값 안에 공백이 없다고 가정하고 공백으로 잘라 태그 이름과 속성들을 분리한다
-        parts = text.split()
+        # 태그 이름과 속성들을 분리한다. 따옴표로 감싼 값 안에는 공백이 들어갈 수
+        # 있으므로(class="wide narrow") 그냥 공백으로 자르면 값이 두 동막으로
+        # 쪼개진다. 그래서 글자를 훑으면서 지금 따옴표 안인지 밖인지를 추적하고,
+        # 따옴표 밖의 공백에서만 자른다. 따옴표 자체는 값에 넣지 않는다.
+        parts = []
+        buf = ""
+        quote = ""
+        for c in text:
+            if quote:
+                if c == quote:
+                    quote = ""
+                else:
+                    buf += c
+            elif c in "'\"":
+                quote = c
+            elif c.isspace():
+                if buf:
+                    parts.append(buf)
+                buf = ""
+            else:
+                buf += c
+        if buf:
+            parts.append(buf)
+
         tag = parts[0].casefold()  # HTML 태그/속성 이름은 대소문자를 구분하지 않는다
         attributes = {}
         for attrpair in parts[1:]:
             if "=" in attrpair:
                 key, value = attrpair.split("=", 1)
-                # 따옴표로 감싼 값이면 따옴표를 벗겨낸다
-                if len(value) > 2 and value[0] in ["'", '"']:
-                    value = value[1:-1]
                 attributes[key.casefold()] = value
             else:
                 # <input disabled>처럼 값이 생략된 속성은 빈 문자열로 둔다
@@ -452,13 +471,35 @@ class CSSParser:
                     break
         return pairs
 
+    def selector_name(self):
+        start = self.i
+        while self.i < len(self.s):
+            if self.s[self.i].isalnum() or self.s[self.i] in "-_":
+                self.i += 1
+            else:
+                break
+        if not (self.i > start):
+            raise Exception(
+                "Parsing error: expected selector name at {}".format(self.i)
+            )
+        return self.s[start : self.i]
+
+    def simple_selector(self):
+        # 단순 셀렉터 하나. 점으로 시작하면 클래스 셀렉터, 아니면 태그 셀렉터다.
+        if self.i < len(self.s) and self.s[self.i] == ".":
+            self.literal(".")
+            # 태그 이름은 대소문자를 구분하지 않지만 클래스 이름은 구분하므로
+            # 여기서는 casefold를 하지 않는다.
+            return ClassSelector(self.selector_name())
+        return TagSelector(self.selector_name().casefold())
+
     def selector(self):
-        # 지원하는 셀렉터는 태그 셀렉터와 후손 셀렉터 두 가지다.
-        # "article div p"처럼 이어지면 왼쪽부터 차례로 감싸 나간다.
-        out = TagSelector(self.word().casefold())
+        # 공백으로 띄운 단순 셀렉터들을 왼쪽부터 후손 관계로 엮는다.
+        # "article div p"는 (article div) p 처럼 왼쪽으로 결합한다.
+        out = self.simple_selector()
         self.whitespace()
         while self.i < len(self.s) and self.s[self.i] != "{":
-            descendant = TagSelector(self.word().casefold())
+            descendant = self.simple_selector()
             out = DescendantSelector(out, descendant)
             self.whitespace()
         return out
@@ -497,6 +538,24 @@ class TagSelector:
 
     def __repr__(self):
         return self.tag
+
+
+class ClassSelector:
+    def __init__(self, cls):
+        self.cls = cls
+        # 클래스 셀렉터는 태그 셀렉터를 이겨야 한다. 실제 CSS도 클래스를 태그보다
+        # 훨씬 무겁게 보므로 넉넉하게 10을 준다.
+        self.priority = 10
+
+    def matches(self, node):
+        if not isinstance(node, Element):
+            return False
+        # class 속성은 공백으로 구분된 목록이다. class="a b"는 .a와 .b 양쪽에
+        # 걸려야 하므로 문자열을 통째로 비교하면 안 되고 쪼개서 확인해야 한다.
+        return self.cls in node.attributes.get("class", "").split()
+
+    def __repr__(self):
+        return "." + self.cls
 
 
 class DescendantSelector:

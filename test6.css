@@ -2,3 +2,7 @@ body { background-color: white; }
 h1 { color: darkred; font-size: 150%; }
 div p { color: green; }
 pre { background-color: lightyellow; }
+span { color: red; }
+.announce { color: green; }
+span.announce { color: blue; }
+.wide { background-color: lavender; }

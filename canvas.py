@@ -20,51 +20,10 @@ SCROLL_STEP = 100
 SCROLLBAR_WIDTH = 12
 PRE_FAMILY = "Courier New"  # pre 안에서 쓰는 고정폭 폰트
 
-# 세로로 쌓이는 블록을 만드는 태그들. 어떤 요소를 블록 모드로 다룰지 판단하는 기준이다.
-BLOCK_ELEMENTS = [
-    "html",
-    "body",
-    "article",
-    "section",
-    "nav",
-    "aside",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hgroup",
-    "header",
-    "footer",
-    "address",
-    "p",
-    "hr",
-    "pre",
-    "blockquote",
-    "ol",
-    "ul",
-    "menu",
-    "li",
-    "dl",
-    "dt",
-    "dd",
-    "figure",
-    "figcaption",
-    "main",
-    "div",
-    "table",
-    "form",
-    "fieldset",
-    "legend",
-    "details",
-    "summary",
-]
-
 
 def is_block_level(node):
-    # 블록급인지 인라인급인지 판정한다. 태그 없는 맨 텍스트도 인라인급이다.
-    return isinstance(node, Element) and node.tag in BLOCK_ELEMENTS
+
+    return node.style.get("display", "inline") == "block"
 
 
 FONTS = {}

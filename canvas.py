@@ -1,7 +1,18 @@
 import tkinter
 import tkinter.font
 
-from broswer import URL, Element, HTMLParser, Text, print_tree
+from broswer import (
+    DEFAULT_STYLE_SHEET,
+    URL,
+    CSSParser,
+    Element,
+    HTMLParser,
+    Text,
+    cascade_priority,
+    print_tree,
+    style,
+    tree_to_list,
+)
 
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
@@ -78,11 +89,12 @@ def get_font(size, weight, style, family=None):
 
 
 class DrawText:
-    def __init__(self, x1, y1, text, font):
+    def __init__(self, x1, y1, text, font, color):
         self.left = x1
         self.top = y1
         self.text = text
         self.font = font
+        self.color = color  # CSS color 속성에서 온 글자색
         # 화면 밖 명령을 건너뛸 때 쓰려고 아래쪽 경계도 미리 계산해 둔다
         self.bottom = y1 + font.metrics("linespace")
 
@@ -94,7 +106,7 @@ class DrawText:
             text=self.text,
             font=self.font,
             anchor="nw",
-            fill="black",  # Tk 9의 다크 모드에서도 보이도록 색을 명시한다
+            fill=self.color,
         )
 
 
@@ -222,14 +234,12 @@ class BlockLayout:
             if pending:
                 previous = self.add_block(pending, previous)
         else:
-            # cursor는 페이지 절대 좌표가 아니라 이 블록 안의 상대 좌표다
+            # cursor는 페이지 절대 좌표가 아니라 이 블록 안의 상대 좌표다.
+            # weight/style/size는 이제 각 노드의 style에서 읽으므로 여기 없다.
             self.cursor_x = 0
             self.cursor_y = 0
-            self.weight = "normal"
-            self.style = "roman"
-            self.size = 12
             self.in_pre = False
-            self.line = []  # 한 줄에 들어갈 단어 버퍼 (상대 x, word, font)
+            self.line = []  # 한 줄에 들어갈 단어 버퍼 (상대 x, word, font, color)
             for node in self.nodes:
                 self.recurse(node)
             self.flush()
@@ -242,79 +252,78 @@ class BlockLayout:
         else:
             self.height = self.cursor_y
 
-    def recurse(self, tree):
+    def recurse(self, node):
         # 자식을 방문하기 전후로 open_tag/close_tag를 부르므로 여닫는 순서가 유지된다
-        if isinstance(tree, Text):
-            self.text(tree)
+        if isinstance(node, Text):
+            self.text(node)
         else:
-            self.open_tag(tree.tag)
-            for child in tree.children:
+            self.open_tag(node)
+            for child in node.children:
                 self.recurse(child)
-            self.close_tag(tree.tag)
+            self.close_tag(node)
 
-    def open_tag(self, tag):
-        if tag == "i":
-            self.style = "italic"
-        elif tag == "b":
-            self.weight = "bold"
-        elif tag == "small":
-            self.size -= 2
-        elif tag == "big":
-            self.size += 4
-        elif tag == "br":
+    # i/b/small/big의 서식 처리는 browser.css로 옮겨갔다. 여기 남은 것은 CSS
+    # 속성으로는 아직 표현할 수 없는 것들뿐이다(줄바꿈, 문단 여백, pre 모드).
+    def open_tag(self, node):
+        if node.tag == "br":
             self.flush()
-        elif tag == "pre":
+        elif node.tag == "pre":
             # pre 진입 전까지 쌓인 일반 텍스트 줄을 먼저 확정하고, 이후 text()가
             # pre_text()로 분기하도록 in_pre를 켠다.
             self.flush()
             self.in_pre = True
 
-    def close_tag(self, tag):
-        if tag == "i":
-            self.style = "roman"
-        elif tag == "b":
-            self.weight = "normal"
-        elif tag == "small":
-            self.size += 2
-        elif tag == "big":
-            self.size -= 4
-        elif tag == "p":
+    def close_tag(self, node):
+        if node.tag == "p":
+            # 문단 아래 여백. margin 속성이 아직 없어서 코드로 남겨둔다.
             self.flush()
             self.cursor_y += VSTEP
-        elif tag == "pre":
+        elif node.tag == "pre":
             # pre 안에서 쌓인 마지막 줄을 확정하고 일반 텍스트 처리로 되돌린다.
             self.flush()
             self.in_pre = False
 
-    def text(self, tok):
+    def font(self, node, family=None):
+        # 노드의 계산된 스타일을 Tk가 이해하는 폰트로 옮긴다.
+        weight = node.style["font-weight"]
+        style = node.style["font-style"]
+        if style == "normal":
+            style = "roman"  # CSS의 normal을 Tk는 roman이라고 부른다
+        # CSS 픽셀을 Tk 포인트로 환산한다(CSS는 1인치를 96픽셀 72포인트로 본다)
+        size = int(float(node.style["font-size"][:-2]) * 0.75)
+        return get_font(size, weight, style, family)
+
+    def text(self, node):
         if self.in_pre:
-            self.pre_text(tok)
+            self.pre_text(node)
             return
         # 개행(\n)을 만나면 줄을 바꿔 원문 문단 구조를 유지한다(2장 연습문제 이식)
-        lines = tok.text.split("\n")
+        lines = node.text.split("\n")
         for i, line in enumerate(lines):
             for word in line.split():
-                self.word(word)
+                self.word(node, word)
             if i < len(lines) - 1:
                 self.flush()
 
-    def pre_text(self, tok):
+    def pre_text(self, node):
         # pre 요구사항: 공백/들여쓰기를 그대로 보존하고, 줄 안에서 자동 줄바꿈을
         # 하지 않는다. 그래서 word()처럼 line.split()으로 단어를 쪼개지 않고
         # 한 줄 전체를 하나의 "단어"처럼 통째로 버퍼에 넣는다. 줄바꿈은 오직
         # 원문에 있는 \n에서만 일어난다.
-        lines = tok.text.split("\n")
+        #
+        # pre 안은 항상 고정폭 폰트를 강제한다(PRE_FAMILY). font-family 속성은
+        # 아직 없으므로 family를 직접 넘겨서 폭이 일정하게 유지되도록 한다.
+        font = self.font(node, PRE_FAMILY)
+        color = node.style["color"]
+        lines = node.text.split("\n")
         for i, line in enumerate(lines):
             if line:
-                # pre 안은 항상 고정폭 폰트를 강제한다(PRE_FAMILY). <b>/<i> 태그로
-                # weight/style이 바뀌어도 family는 유지되므로 폭이 일정하게 유지된다.
-                font = get_font(self.size, self.weight, self.style, PRE_FAMILY)
-                self.line.append((self.cursor_x, line, font))
+                self.line.append((self.cursor_x, line, font, color))
                 self.cursor_x += font.measure(line)
             if i < len(lines) - 1:
-                self.flush_pre_line()
+                self.flush_pre_line(font)
 
-    def flush_pre_line(self):
+    def flush_pre_line(self, font):
         # flush()는 버퍼가 비어 있으면 아무 것도 하지 않고 리턴하므로, 빈 줄
         # (예: 코드 블록 중간의 공백 줄)을 그대로 flush()에 넘기면 커서가
         # 내려가지 않고 다음 줄과 겹쳐버린다. 그래서 "이 줄에 내용이 있든 없든
@@ -322,30 +331,30 @@ class BlockLayout:
         if self.line:
             self.flush()
             return
-        font = get_font(self.size, self.weight, self.style, PRE_FAMILY)
         self.cursor_y += font.metrics("linespace") * 1.25
         self.cursor_x = 0
 
-    def word(self, word):
-        font = get_font(self.size, self.weight, self.style)
+    def word(self, node, word):
+        font = self.font(node)
+        color = node.style["color"]
         w = font.measure(word)
         # width에는 이미 좌우 여백이 빠져 있으므로 그대로 비교하면 된다
         if self.cursor_x + w > self.width:
             self.flush()
-        self.line.append((self.cursor_x, word, font))
+        self.line.append((self.cursor_x, word, font, color))
         self.cursor_x += w + font.measure(" ")
 
     def flush(self):
         if not self.line:
             return
-        metrics = [font.metrics() for x, word, font in self.line]
+        metrics = [font.metrics() for x, word, font, color in self.line]
         max_ascent = max(metric["ascent"] for metric in metrics)
         baseline = self.cursor_y + 1.25 * max_ascent
-        for rel_x, word, font in self.line:
+        for rel_x, word, font, color in self.line:
             # 버퍼에는 블록 기준 상대 좌표가 들어 있으므로 블록 위치를 더해 준다
             x = self.x + rel_x
             y = self.y + baseline - font.metrics("ascent")
-            self.display_list.append((x, y, word, font))
+            self.display_list.append((x, y, word, font, color))
         max_descent = max(metric["descent"] for metric in metrics)
         self.cursor_y = baseline + 1.25 * max_descent
         self.cursor_x = 0
@@ -353,13 +362,19 @@ class BlockLayout:
 
     def paint(self):
         cmds = []
-        # 배경을 글자보다 먼저 넣어야 글자 아래에 깔린다
-        if isinstance(self.nodes[0], Element) and self.nodes[0].tag == "pre":
-            x2, y2 = self.x + self.width, self.y + self.height
-            cmds.append(DrawRect(self.x, self.y, x2, y2, "gray"))
+        # 배경색을 CSS에서 읽는다. 배경은 상속되지 않으므로 이 블록에 대응하는
+        # 요소가 직접 가진 값만 본다. 익명 블록(5-5)은 대응하는 요소가 없으니
+        # 건너뛴다. 익명 블록의 노드는 전부 인라인급이라 이 조건으로 걸러진다.
+        node = self.nodes[0]
+        if is_block_level(node):
+            bgcolor = node.style.get("background-color", "transparent")
+            if bgcolor != "transparent":
+                # 배경을 글자보다 먼저 넣어야 글자 아래에 깔린다
+                x2, y2 = self.x + self.width, self.y + self.height
+                cmds.append(DrawRect(self.x, self.y, x2, y2, bgcolor))
         if self.layout_mode() == "inline":
-            for x, y, word, font in self.display_list:
-                cmds.append(DrawText(x, y, word, font))
+            for x, y, word, font, color in self.display_list:
+                cmds.append(DrawText(x, y, word, font, color))
         return cmds
 
     def __repr__(self):
@@ -394,10 +409,38 @@ class Browser:
         self.canvas.bind("<Configure>", self.resize)
 
     def load(self, url):
-        body = URL(url).request()
+        base_url = url if isinstance(url, URL) else URL(url)
+        body = base_url.request()
         self.nodes = HTMLParser(body).parse()
+
+        # 브라우저 기본 스타일 시트를 깔고, 그 위에 페이지가 링크한 것들을 얹는다.
+        # copy()를 하는 이유는 DEFAULT_STYLE_SHEET가 모듈 전역이라 페이지마다
+        # extend하면 규칙이 계속 누적되기 때문이다.
+        rules = DEFAULT_STYLE_SHEET.copy()
+        for link in self.stylesheet_links(base_url):
+            try:
+                body = link.request()
+            except Exception:
+                # 못 받아온 스타일 시트는 무시하고 페이지는 계속 그린다
+                continue
+            rules.extend(CSSParser(body).parse())
+
+        # 우선순위 순으로 정렬해 넘긴다. 같은 순위끼리는 파일 순서가 유지된다.
+        style(self.nodes, sorted(rules, key=cascade_priority))
+
         self.build_document()
         self.draw()
+
+    def stylesheet_links(self, base_url):
+        # <link rel="stylesheet" href="..."> 를 모두 찾아 절대 URL로 바꿔 준다
+        return [
+            base_url.resolve(node.attributes["href"])
+            for node in tree_to_list(self.nodes, [])
+            if isinstance(node, Element)
+            and node.tag == "link"
+            and node.attributes.get("rel") == "stylesheet"
+            and "href" in node.attributes
+        ]
 
     def build_document(self):
         # 레이아웃 트리를 새로 만들고, 그리기 명령 목록을 모은다
@@ -479,7 +522,10 @@ if __name__ == "__main__":
         args.remove("--layout")
         root = tkinter.Tk()
         root.withdraw()
-        document = DocumentLayout(HTMLParser(URL(args[0]).request()).parse(), WIDTH)
+        nodes = HTMLParser(URL(args[0]).request()).parse()
+        # 레이아웃이 node.style을 읽으므로 스타일을 먼저 계산해야 한다
+        style(nodes, sorted(DEFAULT_STYLE_SHEET.copy(), key=cascade_priority))
+        document = DocumentLayout(nodes, WIDTH)
         document.layout()
         print_tree(document)
     else:

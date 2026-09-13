@@ -493,13 +493,23 @@ class CSSParser:
             return ClassSelector(self.selector_name())
         return TagSelector(self.selector_name().casefold())
 
+    def sequence_selector(self):
+        selectors = [self.simple_selector()]
+        # 시퀀스가 이어진다는 신호는 다음 글자 하나다.
+        # self.i가 문자열 끝을 넘지 않았는지도 같이 확인해야 한다.
+        while self.i < len(self.s) and self.s[self.i] == ".":
+            selectors.append(self.simple_selector())
+        if len(selectors) == 1:
+            return selectors[0]
+        return SequenceSelector(selectors)
+
     def selector(self):
         # 공백으로 띄운 단순 셀렉터들을 왼쪽부터 후손 관계로 엮는다.
         # "article div p"는 (article div) p 처럼 왼쪽으로 결합한다.
-        out = self.simple_selector()
+        out = self.sequence_selector()
         self.whitespace()
         while self.i < len(self.s) and self.s[self.i] != "{":
-            descendant = self.simple_selector()
+            descendant = self.sequence_selector()
             out = DescendantSelector(out, descendant)
             self.whitespace()
         return out
@@ -556,6 +566,19 @@ class ClassSelector:
 
     def __repr__(self):
         return "." + self.cls
+
+
+class SequenceSelector:
+    def __init__(self, selectors):
+        # selectors: TagSelector / ClassSelector 들이 담긴 리스트
+        self.selectors = selectors
+        self.priority = sum(selector.priority for selector in selectors)
+
+    def matches(self, node):
+        return all(selector.matches(node) for selector in self.selectors)
+
+    def __repr__(self):
+        return "".join(repr(selector) for selector in self.selectors)
 
 
 class DescendantSelector:

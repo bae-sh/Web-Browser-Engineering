@@ -161,6 +161,25 @@ class URL:
         with open(self.path, "r", encoding="utf-8") as f:
             return f.read()
 
+    def __str__(self):
+        # 주소창에 URL을 표시하려면 URL 객체를 다시 문자열로 되돌려야 한다.
+        # str(url)이 이 메서드를 부른다.
+        if self.scheme == "data":
+            body = "data:{},{}".format(self.mediatype, self.data)
+        elif self.scheme == "file":
+            body = "file://" + self.path
+        else:
+            # 기본 포트는 굳이 보여주지 않는 편이 주소가 깔끔하다
+            port_part = ":" + str(self.port)
+            if self.scheme == "https" and self.port == 443:
+                port_part = ""
+            elif self.scheme == "http" and self.port == 80:
+                port_part = ""
+            body = self.scheme + "://" + self.host + port_part + self.path
+        if self.view_source:
+            body = "view-source:" + body
+        return body
+
     def resolve(self, url):
         # <link href="...">처럼 페이지 안에 적힌 상대 URL을 절대 URL로 바꾼다.
         # 기준점은 self, 즉 그 링크가 적혀 있던 페이지의 URL이다.
@@ -456,10 +475,22 @@ class CSSParser:
         while self.i < len(self.s) and self.s[self.i] != "}":
             try:
                 prop, val = self.pair()
+                self.whitespace()
+                # 선언이 온전히 끝났는지 확인한 뒤에야 값을 채택한다. 세미콜론
+                # 이거나, 블록의 마지막 선언이면 } 앞이어야 한다.
+                #
+                # 확인 전에 먼저 저장하면 "color: var(--x)"처럼 뒤에 이해 못할
+                # 것이 붙은 선언에서 word()가 읽어낸 앞토막("var")만 살아남는다.
+                # 그 값은 나중에 폰트나 색으로 쓰이다가 예외를 내고 페이지 전체를
+                # 죽인다. 브라우저는 이해 못하는 선언을 통째로 버려야 한다.
+                if self.i < len(self.s) and self.s[self.i] == ";":
+                    self.literal(";")
+                    self.whitespace()
+                elif self.i < len(self.s) and self.s[self.i] != "}":
+                    raise Exception(
+                        "Parsing error: expected ';' or '}}' at {}".format(self.i)
+                    )
                 pairs[prop] = val
-                self.whitespace()
-                self.literal(";")
-                self.whitespace()
             except Exception:
                 # 브라우저는 이해 못하는 선언을 조용히 버리고 나머지를 살린다.
                 # 파서를 디버깅할 때는 이 try를 잠깐 지워보면 원인이 드러난다.
@@ -620,6 +651,36 @@ INHERITED_PROPERTIES = {
     "color": "black",
 }
 
+# 값의 종류가 정해져 있는 속성들. 레이아웃과 그리기 코드가 이 값들만 다룰 줄
+# 안다. em/rem/vw 같은 단위, 숫자 font-weight(600), oblique 등은 아직 모른다.
+SUPPORTED_VALUES = {
+    "font-weight": {"normal", "bold"},
+    "font-style": {"normal", "italic"},
+}
+
+
+def is_supported(property, value):
+    # 브라우저는 이해 못하는 선언을 조용히 버린다. 버리면 그 속성은 1단계에서
+    # 깔아 둔 상속값이나 기본값을 그대로 쓰게 되므로 화면이 깨지지 않는다.
+    # 반대로 모르는 값을 그냥 받아 두면 폰트나 색으로 변환하는 순간 예외가 나서
+    # 페이지 전체가 죽는다.
+    if property == "font-size":
+        # %는 style()이 곧 px로 환산한다. 그 외 단위는 아직 지원하지 않는다.
+        if value.endswith("px"):
+            number = value[:-2]
+        elif value.endswith("%"):
+            number = value[:-1]
+        else:
+            return False
+        try:
+            float(number)
+        except ValueError:
+            return False
+        return True
+    if property in SUPPORTED_VALUES:
+        return value in SUPPORTED_VALUES[property]
+    return True
+
 
 def style(node, rules):
     # 여러 출처의 스타일을 우선순위가 낮은 것부터 덮어써 가며 node.style을 만든다.
@@ -638,12 +699,16 @@ def style(node, rules):
         if not selector.matches(node):
             continue
         for property, value in body.items():
+            if not is_supported(property, value):
+                continue
             node.style[property] = value
 
     # 3) style 속성. 어떤 스타일 시트보다 우선한다.
     if isinstance(node, Element) and "style" in node.attributes:
         pairs = CSSParser(node.attributes["style"]).body()
         for property, value in pairs.items():
+            if not is_supported(property, value):
+                continue
             node.style[property] = value
 
     # 4) font-size의 %를 픽셀로 환산한다(계산된 스타일).

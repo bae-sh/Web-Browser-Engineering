@@ -6,8 +6,12 @@ import tkinter
 root = tkinter.Tk()
 root.withdraw()
 
-from broswer import URL, Element, Text, tree_to_list
-from canvas import HEIGHT, WIDTH, Chrome, DrawText, Tab, TextLayout
+from browser import HEIGHT, WIDTH, Chrome
+from draw import DrawText
+from html_parser import tree_to_list
+from layout import TextLayout
+from tab import Tab
+from url import URL
 
 
 def local(name):
@@ -86,6 +90,8 @@ print()
 print("=== 5. 주소창 편집 ===")
 chrome.click(chrome.address_rect().left + 5, chrome.address_rect().top + 5)
 print("   주소창 클릭 후 focus:", repr(chrome.focus), "/ 내용:", repr(chrome.address_bar))
+# 클릭하면 현재 주소가 남아 있으므로, 백스페이스(7-1)가 생기기 전까지는 직접 비운다
+chrome.address_bar = ""
 for ch in "file://" + os.path.abspath("test7b.html"):
     chrome.keypress(ch)
 print("   타이핑 후 내용:", repr(chrome.address_bar))
@@ -97,7 +103,7 @@ print()
 print("=== 6. pre 안 빈 줄이 살아 있는지 ===")
 pre_tab = Tab(WIDTH, HEIGHT - 60)
 pre_tab.load(local("test.html"))
-from canvas import BlockLayout, LineLayout
+from layout import BlockLayout
 
 for obj in tree_to_list(pre_tab.document, []):
     if isinstance(obj, BlockLayout) and obj.node and getattr(obj.node, "tag", None) == "pre":

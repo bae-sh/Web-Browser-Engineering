@@ -88,7 +88,9 @@ class Chrome:
 
         for i, tab in enumerate(self.browser.tabs):
             bounds = self.tab_rect(i)
-            cmds.append(DrawLine(bounds.left, 0, bounds.left, bounds.bottom, "black", 1))
+            cmds.append(
+                DrawLine(bounds.left, 0, bounds.left, bounds.bottom, "black", 1)
+            )
             cmds.append(
                 DrawLine(bounds.right, 0, bounds.right, bounds.bottom, "black", 1)
             )
@@ -180,7 +182,10 @@ class Chrome:
 
     def keypress(self, char):
         if self.focus == "address bar":
-            self.address_bar += char
+            if char == "\b":
+                self.address_bar = self.address_bar[:-1]
+            else:
+                self.address_bar += char
 
     def enter(self):
         if self.focus == "address bar":
@@ -244,8 +249,13 @@ class Browser:
     def handle_key(self, e):
         # <Key>는 모든 키에 반응하므로 걸러야 한다. 문자가 없는 경우(수식 키)와
         # ASCII 밖(화살표, 기능 키)을 버린다.
+        if e.keysym == "BackSpace":
+            self.chrome.keypress("\b")
+            self.draw()
+            return
         if len(e.char) == 0:
             return
+
         if not (0x20 <= ord(e.char) < 0x7F):
             return
         self.chrome.keypress(e.char)

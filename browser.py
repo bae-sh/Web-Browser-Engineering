@@ -216,6 +216,7 @@ class Browser:
         self.window.bind("<Up>", self.handle_up)
         self.window.bind("<MouseWheel>", self.handle_mousewheel)
         self.window.bind("<Button-1>", self.handle_click)
+        self.window.bind("<Button-3>", self.handle_middle_click)
         self.window.bind("<Key>", self.handle_key)
         self.window.bind("<Return>", self.handle_enter)
         self.canvas.bind("<Configure>", self.handle_resize)
@@ -244,6 +245,16 @@ class Browser:
             # 페이지를 클릭하면 주소창 편집을 끝낸다
             self.chrome.blur()
             self.active_tab.click(e.x, e.y - self.chrome.bottom)
+        self.draw()
+
+    def handle_middle_click(self, e):
+        if e.y < self.chrome.bottom:
+            self.chrome.click(e.x, e.y)
+        else:
+            self.chrome.blur()
+            url = self.active_tab.middle_click(e.x, e.y - self.chrome.bottom)
+            if url:
+                self.new_tab(url)
         self.draw()
 
     def handle_key(self, e):

@@ -93,6 +93,24 @@ class Tab:
                 return self.load(url)
             elt = elt.parent
 
+    def middle_click(self, x, y):
+        y += self.scroll  # 화면 좌표 → 페이지 좌표
+        objs = [
+            obj
+            for obj in tree_to_list(self.document, [])
+            if obj.x <= x < obj.x + obj.width and obj.y <= y < obj.y + obj.height
+        ]
+        if not objs:
+            return
+        elt = objs[-1].node
+
+        while elt:
+            if isinstance(elt, Text):
+                pass
+            elif elt.tag == "a" and "href" in elt.attributes:
+                return self.url.resolve(elt.attributes["href"])
+            elt = elt.parent
+
     def go_back(self):
         # load()가 history에 다시 쌓으므로, 두 개를 빼내고 그중 앞의 것을 연다.
         # 그냥 history[-2]를 열면 뒤로 가기를 두 번 눌렀을 때 제자리를 맴돈다.

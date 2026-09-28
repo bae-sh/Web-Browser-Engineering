@@ -71,17 +71,14 @@ class Tab:
 
     def click(self, x, y):
         # 클릭 처리는 렌더링을 거꾸로 되짚는 일이다. 화면 좌표에서 출발해
-        # 페이지 좌표로, 거기서 레이아웃 객체로, 다시 HTML 요소로 거슬러 간다.
+        # 페이지 좌표로, 거기서 그리기 명령으로, 그 명령을 만든 레이아웃 객체로,
+        # 다시 HTML 요소로 거슬러 간다.
         y += self.scroll  # 화면 좌표 → 페이지 좌표
-        objs = [
-            obj
-            for obj in tree_to_list(self.document, [])
-            if obj.x <= x < obj.x + obj.width and obj.y <= y < obj.y + obj.height
-        ]
-        if not objs:
+        cmds = [cmd for cmd in self.display_list if cmd.rect.contains_point(x, y)]
+        if not cmds:
             return
-        # 그릴 때 뒤에서 앞으로 칠하므로, 판정은 반대로 마지막 것부터 본다
-        elt = objs[-1].node
+        # 목록 뒤쪽 명령일수록 나중에 칠해져 위에 보이므로 마지막 것을 고른다
+        elt = cmds[-1].layout_object.node
 
         # 클릭된 것은 보통 링크 안의 텍스트 노드다. 실제 주소를 알려면 트리를
         # 거슬러 올라가 <a> 요소를 찾아야 한다.

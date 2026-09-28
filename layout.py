@@ -24,7 +24,11 @@ def get_node_font(node, family=None):
 
 def paint_tree(layout_object, display_list):
     # 부모를 먼저 칠하고 자식으로 내려가므로, 자식이 부모 배경 위에 그려진다
-    display_list.extend(layout_object.paint())
+    for cmd in layout_object.paint():
+        # 클릭된 그리기 명령에서 HTML 요소까지 거슬러 가려면 명령이 자기를
+        # 만든 레이아웃 객체를 알아야 한다(7-11)
+        cmd.layout_object = layout_object
+        display_list.append(cmd)
     for child in layout_object.children:
         paint_tree(child, display_list)
 

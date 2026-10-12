@@ -224,3 +224,9 @@ class Tab:
             fill="blue",
             outline="blue",
         )
+
+    def blur(self):
+        if self.focus:
+            self.focus.is_focused = False
+        self.focus = None
+        self.render()

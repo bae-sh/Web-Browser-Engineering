@@ -247,6 +247,7 @@ class Browser:
     def handle_click(self, e):
         if e.y < self.chrome.bottom:
             self.focus = None
+            self.active_tab.blur()
             self.chrome.click(e.x, e.y)
         else:
             # 페이지를 클릭하면 주소창 편집을 끝내고 키 입력을 페이지로 돌린다

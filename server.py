@@ -4,7 +4,7 @@ import urllib.parse
 # 8장의 방명록 서버. 브라우저와 별개의 프로그램이다.
 # 실행: pytk server.py  →  브라우저에서 http://localhost:8000/
 
-ENTRIES = ["Pavel was here"]
+ENTRIES = {"cooking": [], "cars": []}
 
 
 def handle_connection(conx):
@@ -39,11 +39,20 @@ def handle_connection(conx):
 
 
 def do_request(method, url, headers, body):
-    if method == "GET" and url == "/":
-        return "200 OK", show_comments()
-    elif method == "POST" and url == "/add":
-        params = form_decode(body)
-        return "200 OK", add_entry(params)
+    parts = [part for part in url.split("/") if part]
+    if method == "GET" and not parts:
+        return "200 OK", show_topics()
+    elif method == "POST" and parts == ["new"]:
+        return "200 OK", add_topic(form_decode(body))
+    elif method == "GET" and len(parts) == 1 and parts[0] in ENTRIES:
+        return "200 OK", show_topic(parts[0])
+    elif (
+        method == "POST"
+        and len(parts) == 2
+        and parts[0] in ENTRIES
+        and parts[1] == "add"
+    ):
+        return "200 OK", add_entry(form_decode(body), parts[0])
     else:
         return "404 Not Found", not_found(url, method)
 
@@ -62,21 +71,42 @@ def form_decode(body):
     return params
 
 
-def show_comments():
+def show_topics():
     out = "<!doctype html>"
-    for entry in ENTRIES:
+    out += "<h1>Topics</h1>"
+    for topic in ENTRIES:
+        out += "<p><a href=/{}>{}</a></p>".format(topic, topic)
+    out += "<form action=/new method=post>"
+    out += "<p><input name=topic></p>"
+    out += "<p><button>New topic</button></p>"
+    out += "</form>"
+    return out
+
+
+def show_topic(topic):
+    out = "<!doctype html>"
+    out += "<h1>" + topic + "</h1>"
+    out += "<p><a href=/>Home</a></p>"
+    for entry in ENTRIES[topic]:
         out += "<p>" + entry + "</p>"
-    out += "<form action=add method=post>"
+    out += "<form action=/{}/add method=post>".format(topic)
     out += "<p><input name=guest></p>"
     out += "<p><button>Sign the book!</button></p>"
     out += "</form>"
     return out
 
 
-def add_entry(params):
+def add_entry(params, topic):
     if "guest" in params:
-        ENTRIES.append(params["guest"])
-    return show_comments()
+        ENTRIES[topic].append(params["guest"])
+    return show_topic(topic)
+
+
+def add_topic(params):
+    topic = params.get("topic", "")
+    if topic not in ENTRIES:
+        ENTRIES[topic] = []
+    return show_topics()
 
 
 def not_found(url, method):

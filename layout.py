@@ -1,8 +1,9 @@
-from draw import DrawRect, DrawText, Rect, get_font, resolve_color
+from draw import DrawLine, DrawRect, DrawText, Rect, get_font, resolve_color
 from html_parser import Element, Text
 
 HSTEP, VSTEP = 13, 18
 PRE_FAMILY = "Courier New"  # pre 안에서 쓰는 고정폭 폰트
+INPUT_WIDTH_PX = 200  # 입력창과 버튼은 내용과 상관없이 폭이 고정이다
 
 
 def is_block_level(node):
@@ -94,7 +95,8 @@ class BlockLayout:
             return "inline"
         elif any(is_block_level(child) for child in self.nodes[0].children):
             return "block"
-        elif self.nodes[0].children:
+        elif self.nodes[0].children or self.nodes[0].tag == "input":
+            # input은 자식이 없지만 줄 안에 놓여야 그려진다(아토믹 인라인)
             return "inline"
         else:
             return "block"
@@ -158,6 +160,9 @@ class BlockLayout:
         # 자식을 방문하기 전후로 open_tag/close_tag를 부르므로 여닫는 순서가 유지된다
         if isinstance(node, Text):
             self.text(node)
+        elif node.tag == "input" or node.tag == "button":
+            # 버튼의 글자는 InputLayout이 직접 그리므로 자식으로 내려가지 않는다
+            self.input(node)
         else:
             self.open_tag(node)
             for child in node.children:
@@ -216,6 +221,17 @@ class BlockLayout:
         if self.cursor_x + w > self.width:
             self.new_line()
         self.add_word(node, word)
+        self.cursor_x += w + font.measure(" ")
+
+    def input(self, node):
+        # word()와 같은 흐름이고 폭을 정하는 방식만 다르다
+        w = INPUT_WIDTH_PX
+        if self.cursor_x + w > self.width:
+            self.new_line()
+        line = self.children[-1]
+        previous_word = line.children[-1] if line.children else None
+        line.children.append(InputLayout(node, line, previous_word))
+        font = get_node_font(node)
         self.cursor_x += w + font.measure(" ")
 
     def pre_text(self, node):
@@ -351,4 +367,66 @@ class TextLayout:
     def __repr__(self):
         return "TextLayout({!r}, x={}, y={}, width={}, height={})".format(
             self.word, self.x, self.y, self.width, self.height
+        )
+
+
+class InputLayout:
+    # <input>과 <button>. TextLayout처럼 줄 안에 놓이지만, 그릴 글자가 단어가
+    # 아니라 value 속성(input)이나 안쪽 텍스트(button)에서 온다.
+    #
+    # 책은 이 노드들로 생긴 BlockLayout이 배경을 두 번 칠하지 않도록
+    # should_paint()를 추가하지만, 여기 BlockLayout.paint()는 이미 블록급
+    # 요소의 배경만 칠하므로 따로 막을 필요가 없다.
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.children = []
+        self.parent = parent
+        self.previous = previous
+        self.x = None
+        self.y = None  # TextLayout과 마찬가지로 LineLayout이 채워 준다
+        self.width = None
+        self.height = None
+        self.font = None
+
+    def layout(self):
+        self.font = get_node_font(self.node)
+        self.width = INPUT_WIDTH_PX
+        if self.previous:
+            space = self.previous.font.measure(" ")
+            self.x = self.previous.x + space + self.previous.width
+        else:
+            self.x = self.parent.x
+        self.height = self.font.metrics("linespace")
+
+    def self_rect(self):
+        return Rect(self.x, self.y, self.x + self.width, self.y + self.height)
+
+    def paint(self):
+        cmds = []
+        bgcolor = self.node.style.get("background-color", "transparent")
+        if bgcolor != "transparent":
+            bgcolor = resolve_color(bgcolor, None)
+            if bgcolor:
+                cmds.append(DrawRect(self.self_rect(), bgcolor))
+
+        if self.node.tag == "input":
+            text = self.node.attributes.get("value", "")
+        elif len(self.node.children) == 1 and isinstance(self.node.children[0], Text):
+            text = self.node.children[0].text
+        else:
+            # 버튼 안의 복잡한 HTML은 다루지 않는다(연습문제 8-8)
+            print("Ignoring HTML contents inside button")
+            text = ""
+
+        color = resolve_color(self.node.style["color"])
+        cmds.append(DrawText(self.x, self.y, text, self.font, color))
+
+        if self.node.is_focused:
+            cx = self.x + self.font.measure(text)
+            cmds.append(DrawLine(cx, self.y, cx, self.y + self.height, "black", 1))
+        return cmds
+
+    def __repr__(self):
+        return "InputLayout(<{}>, x={}, y={}, width={}, height={})".format(
+            self.node.tag, self.x, self.y, self.width, self.height
         )

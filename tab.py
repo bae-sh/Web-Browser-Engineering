@@ -1,3 +1,5 @@
+import urllib.parse
+
 from css import DEFAULT_STYLE_SHEET, CSSParser, cascade_priority, style
 from html_parser import Element, HTMLParser, Text, tree_to_list
 from layout import VSTEP, DocumentLayout, paint_tree
@@ -17,31 +19,40 @@ class Tab:
         self.history = []  # 뒤로 가기를 위해 방문한 URL을 쌓아 둔다
         self.scroll = 0
         self.nodes = None
+        self.rules = []
         self.document = None
         self.display_list = []
+        self.focus = None  # 지금 타이핑을 받는 입력창 요소
 
-    def load(self, url):
+    def load(self, url, payload=None):
+        # payload가 있으면 폼 제출이고 POST로 보낸다
         self.url = url if isinstance(url, URL) else URL(url)
         self.history.append(self.url)
         self.scroll = 0
-        body = self.url.request()
+        self.focus = None
+        body = self.url.request(payload)
         self.nodes = HTMLParser(body).parse()
 
         # 브라우저 기본 스타일 시트를 깔고, 그 위에 페이지가 링크한 것들을 얹는다.
         # copy()를 하는 이유는 DEFAULT_STYLE_SHEET가 모듈 전역이라 페이지마다
         # extend하면 규칙이 계속 누적되기 때문이다.
-        rules = DEFAULT_STYLE_SHEET.copy()
+        # 스타일 시트 다운로드는 여기서 한 번만 하고, render()가 매번 재사용한다.
+        self.rules = DEFAULT_STYLE_SHEET.copy()
         for link in self.stylesheet_links():
             try:
                 body = link.request()
             except Exception:
                 # 못 받아온 스타일 시트는 무시하고 페이지는 계속 그린다
                 continue
-            rules.extend(CSSParser(body).parse())
+            self.rules.extend(CSSParser(body).parse())
 
+        self.render()
+
+    def render(self):
+        # 입력창에 글자를 치면 HTML 트리가 바뀐다. 페이지를 다시 받지 않고
+        # 스타일, 레이아웃, 페인트만 다시 해서 화면에 반영한다.
         # 우선순위 순으로 정렬해 넘긴다. 같은 순위끼리는 파일 순서가 유지된다.
-        style(self.nodes, sorted(rules, key=cascade_priority))
-
+        style(self.nodes, sorted(self.rules, key=cascade_priority))
         self.build_document()
 
     def stylesheet_links(self):
@@ -70,15 +81,19 @@ class Tab:
         self.scroll = min(self.scroll, self.max_scroll())
 
     def click(self, x, y):
+        # 어디를 클릭하든 일단 기존 포커스는 푼다. 그래야 다른 곳을 눌렀을 때
+        # 이전 입력창의 커서가 남지 않는다.
+        if self.focus:
+            self.focus.is_focused = False
+        self.focus = None
+
         # 클릭 처리는 렌더링을 거꾸로 되짚는 일이다. 화면 좌표에서 출발해
         # 페이지 좌표로, 거기서 그리기 명령으로, 그 명령을 만든 레이아웃 객체로,
         # 다시 HTML 요소로 거슬러 간다.
         y += self.scroll  # 화면 좌표 → 페이지 좌표
         cmds = [cmd for cmd in self.display_list if cmd.rect.contains_point(x, y)]
-        if not cmds:
-            return
         # 목록 뒤쪽 명령일수록 나중에 칠해져 위에 보이므로 마지막 것을 고른다
-        elt = cmds[-1].layout_object.node
+        elt = cmds[-1].layout_object.node if cmds else None
 
         # 클릭된 것은 보통 링크 안의 텍스트 노드다. 실제 주소를 알려면 트리를
         # 거슬러 올라가 <a> 요소를 찾아야 한다.
@@ -88,7 +103,53 @@ class Tab:
             elif elt.tag == "a" and "href" in elt.attributes:
                 url = self.url.resolve(elt.attributes["href"])
                 return self.load(url)
+            elif elt.tag == "input":
+                elt.attributes["value"] = ""
+                self.focus = elt
+                elt.is_focused = True
+                return self.render()
+            elif elt.tag == "button":
+                form = elt.parent
+                while form:
+                    if form.tag == "form" and "action" in form.attributes:
+                        return self.submit_form(form)
+                    form = form.parent
+                # 폼 밖의 버튼은 누를 게 없다
+                break
             elt = elt.parent
+        # 포커스가 풀렸을 수 있으니 커서를 지우려면 다시 그려야 한다
+        self.render()
+
+    def submit_form(self, elt):
+        inputs = [
+            node
+            for node in tree_to_list(elt, [])
+            if isinstance(node, Element)
+            and node.tag == "input"
+            and "name" in node.attributes
+        ]
+        # 폼 인코딩: name=value 쌍을 &로 잇는다. 이름이나 값에 =, & 같은
+        # 문자가 들어가면 구분이 깨지므로 퍼센트 인코딩한다.
+        body = ""
+        for input in inputs:
+            name = urllib.parse.quote(input.attributes["name"])
+            value = urllib.parse.quote(input.attributes.get("value", ""))
+            body += "&" + name + "=" + value
+        body = body[1:]
+
+        url = self.url.resolve(elt.attributes["action"])
+        self.load(url, body)
+
+    def keypress(self, char):
+        if self.focus:
+            value = self.focus.attributes.get("value", "")
+            if char == "\b":
+                self.focus.attributes["value"] = value[:-1]
+            else:
+                self.focus.attributes["value"] = value + char
+            # draw()가 아니라 render()다. 페이지 내용이 바뀌었으니 화면만
+            # 다시 칠해서는 안 되고 디스플레이 리스트부터 다시 만들어야 한다.
+            self.render()
 
     def middle_click(self, x, y):
         y += self.scroll  # 화면 좌표 → 페이지 좌표

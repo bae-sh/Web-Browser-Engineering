@@ -3,6 +3,7 @@ class Text:
         self.text = text
         self.children = []  # 텍스트는 항상 잎(leaf)이지만 Element와 형태를 맞춘다
         self.parent = parent
+        self.is_focused = False  # 포커스될 일은 없지만 Element와 필드를 맞춘다
 
     def __repr__(self):
         return repr(self.text)
@@ -14,6 +15,9 @@ class Element:
         self.attributes = attributes
         self.children = []
         self.parent = parent
+        # 입력창 커서는 그 입력창의 InputLayout이 그리므로, 노드 스스로 자기가
+        # 포커스된 상태인지 알고 있어야 한다
+        self.is_focused = False
 
     def __repr__(self):
         return "<" + self.tag + ">"

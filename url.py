@@ -42,16 +42,20 @@ class URL:
             self.host, self.port = self.host.split(":", 1)
             self.port = int(self.port)
 
-    def request(self, max_redirects=10):
+    def request(self, payload=None, max_redirects=10):
         if self.scheme == "data":
             return self.data
 
         if self.scheme == "file":
             return self.request_file()
 
+        # 빈 폼도 제출은 제출이므로 payload가 ""여도 POST로 본다
+        method = "POST" if payload is not None else "GET"
+
         cache_key = "{}://{}:{}{}".format(self.scheme, self.host, self.port, self.path)
         now = time.time()
-        if cache_key in URL.cache:
+        # POST는 서버 상태를 바꾸는 요청이라 캐시에서 꺼내 주면 안 된다
+        if method == "GET" and cache_key in URL.cache:
             cached_body, expiry = URL.cache[cache_key]
             if expiry is None or now < expiry:
                 return cached_body
@@ -80,10 +84,16 @@ class URL:
             #  Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 크롬은 매우 복잡
             "User-Agent": "baesh",
         }
-        request = "GET {} HTTP/1.1\r\n".format(self.path)
+        if payload is not None:
+            # POST에는 Content-Length가 필수다. 글자 수가 아니라 바이트 수라서
+            # 한글처럼 여러 바이트인 문자가 있으면 len(payload)와 다르다.
+            headers["Content-Length"] = len(payload.encode("utf-8"))
+        request = "{} {} HTTP/1.1\r\n".format(method, self.path)
         for header, value in headers.items():
             request += "{}: {}\r\n".format(header, value)
         request += "\r\n"
+        if payload is not None:
+            request += payload
         s.send(request.encode("utf-8"))
 
         status_line = response.readline().decode("utf-8")
@@ -96,13 +106,30 @@ class URL:
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
 
+        # 서버가 응답 후 연결을 끊겠다고 하면 소켓을 재사용 목록에서 뺀다.
+        # HTTP/1.0 응답은 keep-alive를 명시하지 않는 한 끊는 것이 기본이다.
+        # 그대로 두면 다음 요청이 이미 닫힌 소켓으로 나가 응답이 비어 버린다.
+        connection = response_headers.get("connection", "").lower()
+        keep_alive = (
+            connection == "keep-alive"
+            if version == "HTTP/1.0"
+            else connection != "close"
+        )
+
         if response_headers.get("transfer-encoding") == "chunked":
             body_bytes = self.read_chunked(response)
         elif "content-length" in response_headers:
             content_length = int(response_headers["content-length"])
             body_bytes = response.read(content_length)
+        elif not keep_alive:
+            # 길이를 안 알려 주고 연결을 끊는 서버는 끊길 때까지가 본문이다
+            body_bytes = response.read()
         else:
             body_bytes = b""
+
+        if not keep_alive:
+            s.close()
+            del URL.connections[key]
 
         if response_headers.get("content-encoding") == "gzip":
             body_bytes = gzip.decompress(body_bytes)
@@ -117,22 +144,29 @@ class URL:
                 location = "{}://{}:{}{}".format(
                     self.scheme, self.host, self.port, location
                 )
-            result_body = URL(location).request(max_redirects - 1)
+            # POST 뒤의 리다이렉트는 GET으로 따라간다. 서버가 폼 처리 후 결과
+            # 페이지로 보내는 흔한 패턴이 이것이다.
+            result_body = URL(location).request(max_redirects=max_redirects - 1)
         else:
             result_body = body
 
-        if status in ["200", "301", "404"]:
+        # Cache-Control이 없는 응답은 캐시하지 않는다. 예전에는 무기한 캐시했는데,
+        # 그러면 폼 제출로 서버 내용이 바뀌어도 옛 페이지가 계속 나온다.
+        if (
+            method == "GET"
+            and status in ["200", "301", "404"]
+            and "cache-control" in response_headers
+        ):
             should_cache = True
             expiry = None
-            if "cache-control" in response_headers:
-                directives = response_headers["cache-control"].lower().split(",")
-                for directive in directives:
-                    directive = directive.strip()
-                    if directive.startswith("max-age="):
-                        expiry = now + int(directive[len("max-age=") :])
-                    else:
-                        # no-store를 포함해, max-age 외의 값이면 캐시하지 않음
-                        should_cache = False
+            directives = response_headers["cache-control"].lower().split(",")
+            for directive in directives:
+                directive = directive.strip()
+                if directive.startswith("max-age="):
+                    expiry = now + int(directive[len("max-age=") :])
+                else:
+                    # no-store를 포함해, max-age 외의 값이면 캐시하지 않음
+                    should_cache = False
             if should_cache:
                 URL.cache[cache_key] = (result_body, expiry)
 

@@ -181,11 +181,14 @@ class Chrome:
                     break
 
     def keypress(self, char):
+        # 키를 썼으면 True를 돌려준다. Browser가 이걸 보고 페이지에 넘길지 정한다.
         if self.focus == "address bar":
             if char == "\b":
                 self.address_bar = self.address_bar[:-1]
             else:
                 self.address_bar += char
+            return True
+        return False
 
     def enter(self):
         if self.focus == "address bar":
@@ -211,6 +214,9 @@ class Browser:
         self.tabs = []
         self.active_tab = None
         self.chrome = Chrome(self)
+        # 키 입력을 크롬이 받을지 페이지가 받을지 기억한다. 페이지 안에서 어느
+        # 입력창이 받는지는 Tab이 따로 기억한다(포커스의 계층 구조).
+        self.focus = None
 
         self.window.bind("<Down>", self.handle_down)
         self.window.bind("<Up>", self.handle_up)
@@ -240,9 +246,11 @@ class Browser:
 
     def handle_click(self, e):
         if e.y < self.chrome.bottom:
+            self.focus = None
             self.chrome.click(e.x, e.y)
         else:
-            # 페이지를 클릭하면 주소창 편집을 끝낸다
+            # 페이지를 클릭하면 주소창 편집을 끝내고 키 입력을 페이지로 돌린다
+            self.focus = "content"
             self.chrome.blur()
             self.active_tab.click(e.x, e.y - self.chrome.bottom)
         self.draw()
@@ -261,16 +269,17 @@ class Browser:
         # <Key>는 모든 키에 반응하므로 걸러야 한다. 문자가 없는 경우(수식 키)와
         # ASCII 밖(화살표, 기능 키)을 버린다.
         if e.keysym == "BackSpace":
-            self.chrome.keypress("\b")
-            self.draw()
+            char = "\b"
+        elif len(e.char) == 0 or not (0x20 <= ord(e.char) < 0x7F):
             return
-        if len(e.char) == 0:
-            return
+        else:
+            char = e.char
 
-        if not (0x20 <= ord(e.char) < 0x7F):
-            return
-        self.chrome.keypress(e.char)
-        self.draw()
+        if self.chrome.keypress(char):
+            self.draw()
+        elif self.focus == "content":
+            self.active_tab.keypress(char)
+            self.draw()
 
     def handle_enter(self, e):
         self.chrome.enter()

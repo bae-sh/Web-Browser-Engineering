@@ -42,6 +42,9 @@ def do_request(method, url, headers, body):
     parts = [part for part in url.split("/") if part]
     if method == "GET" and not parts:
         return "200 OK", show_topics()
+    elif method == "GET" and parts in (["comment.js"], ["comment.css"]):
+        with open(parts[0], encoding="utf8") as f:
+            return "200 OK", f.read()
     elif method == "POST" and parts == ["new"]:
         return "200 OK", add_topic(form_decode(body))
     elif method == "GET" and len(parts) == 1 and parts[0] in ENTRIES:
@@ -85,6 +88,7 @@ def show_topics():
 
 def show_topic(topic):
     out = "<!doctype html>"
+    out += "<link rel=stylesheet href=/comment.css>"
     out += "<h1>" + topic + "</h1>"
     out += "<p><a href=/>Home</a></p>"
     for entry in ENTRIES[topic]:
@@ -93,6 +97,9 @@ def show_topic(topic):
     out += "<p><input name=guest></p>"
     out += "<p><button>Sign the book!</button></p>"
     out += "</form>"
+    # 처음엔 비어 있다가, 글이 너무 길면 comment.js가 경고를 써 넣는다
+    out += "<strong></strong>"
+    out += "<script src=/comment.js></script>"
     return out
 
 

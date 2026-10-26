@@ -2,6 +2,7 @@ import urllib.parse
 
 from css import DEFAULT_STYLE_SHEET, CSSParser, cascade_priority, style
 from html_parser import Element, HTMLParser, Text, tree_to_list
+from js import JSContext
 from layout import VSTEP, DocumentLayout, paint_tree
 from url import URL
 
@@ -23,6 +24,7 @@ class Tab:
         self.document = None
         self.display_list = []
         self.focus = None  # 지금 타이핑을 받는 입력창 요소
+        self.js = None  # 페이지마다 새로 만드는 자바스크립트 실행 환경
 
     def load(self, url, payload=None):
         # payload가 있으면 폼 제출이고 POST로 보낸다
@@ -46,6 +48,18 @@ class Tab:
                 continue
             self.rules.extend(CSSParser(body).parse())
 
+        # 스크립트는 스타일과 레이아웃보다 먼저 돈다. 스크립트가 innerHTML로
+        # 페이지를 바꾸면 그 안에서 render()를 부르므로 규칙은 먼저 모아 둔다.
+        # 실제 브라우저는 <script>를 파싱하는 즉시 실행하지만, 여기서는 다
+        # 파싱한 뒤에 실행한다(defer 속성을 준 것과 같은 동작).
+        self.js = JSContext(self)
+        for script in self.script_links():
+            try:
+                body = script.request()
+            except Exception:
+                continue
+            self.js.run(script, body)
+
         self.render()
 
     def render(self):
@@ -64,6 +78,17 @@ class Tab:
             and node.tag == "link"
             and node.attributes.get("rel") == "stylesheet"
             and "href" in node.attributes
+        ]
+
+    def script_links(self):
+        # <script src="...">만 다룬다. 태그 안에 직접 쓴 코드는 <, >가 섞여
+        # 파싱이 까다로워서 지원하지 않는다.
+        return [
+            self.url.resolve(node.attributes["src"])
+            for node in tree_to_list(self.nodes, [])
+            if isinstance(node, Element)
+            and node.tag == "script"
+            and "src" in node.attributes
         ]
 
     def build_document(self):
@@ -101,14 +126,17 @@ class Tab:
             if isinstance(elt, Text):
                 pass
             elif elt.tag == "a" and "href" in elt.attributes:
+                self.js.dispatch_event("click", elt)
                 url = self.url.resolve(elt.attributes["href"])
                 return self.load(url)
             elif elt.tag == "input":
+                self.js.dispatch_event("click", elt)
                 elt.attributes["value"] = ""
                 self.focus = elt
                 elt.is_focused = True
                 return self.render()
             elif elt.tag == "button":
+                self.js.dispatch_event("click", elt)
                 form = elt.parent
                 while form:
                     if form.tag == "form" and "action" in form.attributes:
@@ -121,6 +149,8 @@ class Tab:
         self.render()
 
     def submit_form(self, elt):
+        # 요청을 보내기 전에 알려야 스크립트가 제출 직전 상태를 볼 수 있다
+        self.js.dispatch_event("submit", elt)
         inputs = [
             node
             for node in tree_to_list(elt, [])
@@ -142,6 +172,8 @@ class Tab:
 
     def keypress(self, char):
         if self.focus:
+            # 값이 바뀌기 전에 보내므로 리스너는 이번 글자가 들어가기 전 값을 본다
+            self.js.dispatch_event("keydown", self.focus)
             value = self.focus.attributes.get("value", "")
             if char == "\b":
                 self.focus.attributes["value"] = value[:-1]

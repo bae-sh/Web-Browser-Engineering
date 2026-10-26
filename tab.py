@@ -125,18 +125,23 @@ class Tab:
         while elt:
             if isinstance(elt, Text):
                 pass
+            # 리스너가 기본 동작을 취소하면 거기서 멈춘다. 그래도 위에서 풀린
+            # 포커스의 커서는 지워야 하므로 그냥 return하지 않고 render()한다.
             elif elt.tag == "a" and "href" in elt.attributes:
-                self.js.dispatch_event("click", elt)
+                if self.js.dispatch_event("click", elt):
+                    return self.render()
                 url = self.url.resolve(elt.attributes["href"])
                 return self.load(url)
             elif elt.tag == "input":
-                self.js.dispatch_event("click", elt)
+                if self.js.dispatch_event("click", elt):
+                    return self.render()
                 elt.attributes["value"] = ""
                 self.focus = elt
                 elt.is_focused = True
                 return self.render()
             elif elt.tag == "button":
-                self.js.dispatch_event("click", elt)
+                if self.js.dispatch_event("click", elt):
+                    return self.render()
                 form = elt.parent
                 while form:
                     if form.tag == "form" and "action" in form.attributes:
@@ -150,7 +155,8 @@ class Tab:
 
     def submit_form(self, elt):
         # 요청을 보내기 전에 알려야 스크립트가 제출 직전 상태를 볼 수 있다
-        self.js.dispatch_event("submit", elt)
+        if self.js.dispatch_event("submit", elt):
+            return self.render()
         inputs = [
             node
             for node in tree_to_list(elt, [])
@@ -173,7 +179,8 @@ class Tab:
     def keypress(self, char):
         if self.focus:
             # 값이 바뀌기 전에 보내므로 리스너는 이번 글자가 들어가기 전 값을 본다
-            self.js.dispatch_event("keydown", self.focus)
+            if self.js.dispatch_event("keydown", self.focus):
+                return
             value = self.focus.attributes.get("value", "")
             if char == "\b":
                 self.focus.attributes["value"] = value[:-1]

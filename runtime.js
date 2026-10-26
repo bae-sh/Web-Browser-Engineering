@@ -28,13 +28,26 @@ Node.prototype.addEventListener = function(type, listener) {
     list.push(listener);
 }
 
-Node.prototype.dispatchEvent = function(type) {
+function Event(type) {
+    this.type = type;
+    // preventDefault()가 불렸는지 기록한다. 브라우저는 이 값을 보고
+    // 링크 이동, 글자 입력, 폼 제출 같은 기본 동작을 할지 정한다.
+    this.do_default = true;
+}
+
+Event.prototype.preventDefault = function() {
+    this.do_default = false;
+}
+
+Node.prototype.dispatchEvent = function(evt) {
+    var type = evt.type;
     var handle = this.handle;
     var list = (LISTENERS[handle] && LISTENERS[handle][type]) || [];
     for (var i = 0; i < list.length; i++) {
         // 리스너 안의 this가 이벤트가 일어난 노드를 가리키게 한다
-        list[i].call(this);
+        list[i].call(this, evt);
     }
+    return evt.do_default;
 }
 
 Object.defineProperty(Node.prototype, 'innerHTML', {

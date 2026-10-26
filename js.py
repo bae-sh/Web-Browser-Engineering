@@ -10,7 +10,7 @@ with open(RUNTIME_JS_PATH, "r", encoding="utf-8") as _f:
     RUNTIME_JS = _f.read()
 
 # dukpy.handle, dukpy.type은 evaljs에 키워드 인자로 넘긴 값이다
-EVENT_DISPATCH_JS = "new Node(dukpy.handle).dispatchEvent(dukpy.type)"
+EVENT_DISPATCH_JS = "new Node(dukpy.handle).dispatchEvent(new Event(dukpy.type))"
 
 
 class JSContext:
@@ -41,7 +41,9 @@ class JSContext:
     def dispatch_event(self, type, elt):
         # 자바스크립트가 한 번도 만진 적 없는 노드는 핸들이 없고, 리스너도 없다
         handle = self.node_to_handle.get(elt, -1)
-        self.interp.evaljs(EVENT_DISPATCH_JS, type=type, handle=handle)
+        do_default = self.interp.evaljs(EVENT_DISPATCH_JS, type=type, handle=handle)
+        # True를 돌려주면 "스크립트가 기본 동작을 취소했다"는 뜻이다
+        return not do_default
 
     def get_handle(self, elt):
         if elt not in self.node_to_handle:

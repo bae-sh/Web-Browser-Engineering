@@ -104,7 +104,8 @@ def show_topic(topic):
 
 
 def add_entry(params, topic):
-    if "guest" in params:
+    # 자바스크립트를 안 돌리는 브라우저도 있으니 서버에서도 길이를 확인한다
+    if "guest" in params and len(params["guest"]) <= 100:
         ENTRIES[topic].append(params["guest"])
     return show_topic(topic)
 

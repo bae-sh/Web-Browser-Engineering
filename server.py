@@ -1,3 +1,4 @@
+import html
 import random
 import socket
 import urllib.parse
@@ -53,8 +54,12 @@ def handle_connection(conx):
     response = "HTTP/1.0 {}\r\n".format(status)
     response += "Content-Length: {}\r\n".format(len(body.encode("utf8")))
     if is_new_visitor:
-        # 다음 요청부터 이 토큰을 Cookie 헤더에 담아 보내 달라는 뜻
-        response += "Set-Cookie: token={}\r\n".format(token)
+        # 다음 요청부터 이 토큰을 Cookie 헤더에 담아 보내 달라는 뜻.
+        # SameSite=Lax: 다른 사이트의 폼이 POST할 때는 이 쿠키를 싣지 말라는 뜻
+        response += "Set-Cookie: token={}; SameSite=Lax\r\n".format(token)
+    # 이 출처가 아닌 곳의 CSS, JS는 받지 말라고 브라우저에게 알린다
+    csp = "default-src http://localhost:8000"
+    response += "Content-Security-Policy: {}\r\n".format(csp)
     response += "\r\n" + body
     conx.send(response.encode("utf8"))
     conx.close()
@@ -163,23 +168,34 @@ def show_topic(session, topic):
     out += "<p><a href=/>Home</a></p>"
     out += login_status(session)
     for entry, who in ENTRIES[topic]:
-        out += "<p>" + entry + "\n"
-        out += "<i>by " + who + "</i></p>"
+        # 사용자가 쓴 글은 데이터다. <script> 같은 태그가 코드로 해석되지
+        # 않도록 &lt; 같은 형태로 바꿔서 내보낸다.
+        out += "<p>" + html.escape(entry) + "\n"
+        out += "<i>by " + html.escape(who) + "</i></p>"
     if "user" in session:
+        # 폼마다 비밀값을 넣어 두고, 제출 때 같은 값이 오는지 확인한다.
+        # 다른 사이트의 폼은 이 값을 알 수 없다.
+        nonce = str(random.random())[2:]
+        session["nonce"] = nonce
         out += "<form action=/{}/add method=post>".format(topic)
         out += "<p><input name=guest></p>"
+        # 원래 type=hidden은 안 보여야 하지만 우리 브라우저는 그냥 그린다
+        out += "<input name=nonce type=hidden value=" + nonce + ">"
         out += "<p><button>Sign the book!</button></p>"
         out += "</form>"
         # 처음엔 비어 있다가, 글이 너무 길면 comment.js가 경고를 써 넣는다.
         # comment.js는 폼이 있다고 가정하므로 폼과 함께 보낸다.
         out += "<strong></strong>"
         out += "<script src=/comment.js></script>"
+    # CSP가 동작하는지 보기 위한 외부 스크립트. 브라우저가 막아야 한다.
+    out += "<script src=https://example.com/evil.js></script>"
     return out
 
 
 def add_entry(session, params, topic):
     # 폼을 숨겼어도 누구나 직접 POST를 보낼 수 있으니 서버에서 다시 확인한다
-    if "user" in session:
+    nonce_ok = "nonce" in session and session["nonce"] == params.get("nonce")
+    if "user" in session and nonce_ok:
         # 자바스크립트를 안 돌리는 브라우저도 있으니 서버에서도 길이를 확인한다
         if "guest" in params and len(params["guest"]) <= 100:
             ENTRIES[topic].append((params["guest"], session["user"]))

@@ -28,12 +28,24 @@ class Tab:
 
     def load(self, url, payload=None):
         # payload가 있으면 폼 제출이고 POST로 보낸다
-        self.url = url if isinstance(url, URL) else URL(url)
+        url = url if isinstance(url, URL) else URL(url)
+        # self.url을 바꾸기 전에 요청해야 "지금 보던 페이지"가 referrer가 된다
+        headers, body = url.request(self.url, payload)
+        self.url = url
         self.history.append(self.url)
         self.scroll = 0
         self.focus = None
-        body = self.url.request(payload)
         self.nodes = HTMLParser(body).parse()
+
+        # Content-Security-Policy: default-src 출처1 출처2 ...
+        # 이 목록에 있는 출처에서만 CSS, JS, XHR을 받는다. None이면 제한 없음.
+        self.allowed_origins = None
+        if "content-security-policy" in headers:
+            csp = headers["content-security-policy"].split()
+            if len(csp) > 0 and csp[0] == "default-src":
+                self.allowed_origins = []
+                for origin in csp[1:]:
+                    self.allowed_origins.append(URL(origin).origin())
 
         # 브라우저 기본 스타일 시트를 깔고, 그 위에 페이지가 링크한 것들을 얹는다.
         # copy()를 하는 이유는 DEFAULT_STYLE_SHEET가 모듈 전역이라 페이지마다
@@ -41,8 +53,11 @@ class Tab:
         # 스타일 시트 다운로드는 여기서 한 번만 하고, render()가 매번 재사용한다.
         self.rules = DEFAULT_STYLE_SHEET.copy()
         for link in self.stylesheet_links():
+            if not self.allowed_request(link):
+                print("Blocked style", link, "due to CSP")
+                continue
             try:
-                body = link.request()
+                header, body = link.request(url)
             except Exception:
                 # 못 받아온 스타일 시트는 무시하고 페이지는 계속 그린다
                 continue
@@ -54,13 +69,19 @@ class Tab:
         # 파싱한 뒤에 실행한다(defer 속성을 준 것과 같은 동작).
         self.js = JSContext(self)
         for script in self.script_links():
+            if not self.allowed_request(script):
+                print("Blocked script", script, "due to CSP")
+                continue
             try:
-                body = script.request()
+                header, body = script.request(url)
             except Exception:
                 continue
             self.js.run(script, body)
 
         self.render()
+
+    def allowed_request(self, url):
+        return self.allowed_origins is None or url.origin() in self.allowed_origins
 
     def render(self):
         # 입력창에 글자를 치면 HTML 트리가 바뀐다. 페이지를 다시 받지 않고

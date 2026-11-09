@@ -85,8 +85,11 @@ class JSContext:
     def XMLHttpRequest_send(self, method, url, body):
         # method는 쓰지 않는다. request()가 body 유무로 GET/POST를 정한다.
         full_url = self.tab.url.resolve(url)
+        if not self.tab.allowed_request(full_url):
+            raise Exception("Cross-origin XHR blocked by CSP")
         # 다른 출처의 응답을 스크립트가 읽으면 그 사이트의 쿠키로 만든 개인
         # 정보가 새어 나간다
         if full_url.origin() != self.tab.url.origin():
             raise Exception("Cross-origin XHR request not allowed")
-        return full_url.request(body)
+        headers, out = full_url.request(self.tab.url, body)
+        return out

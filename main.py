@@ -20,7 +20,7 @@ if __name__ == "__main__":
         # view-source: 주소면 트리 대신 받아 온 원문을 그대로 출력한다.
         args.remove("--tree")
         url = URL(args[0])
-        body = url.request()
+        headers, body = url.request(None)
         if url.view_source:
             print(body, end="")
         else:
@@ -30,7 +30,8 @@ if __name__ == "__main__":
         args.remove("--layout")
         root = tkinter.Tk()
         root.withdraw()
-        nodes = HTMLParser(URL(args[0]).request()).parse()
+        headers, body = URL(args[0]).request(None)
+        nodes = HTMLParser(body).parse()
         # 레이아웃이 node.style을 읽으므로 스타일을 먼저 계산해야 한다
         style(nodes, sorted(DEFAULT_STYLE_SHEET.copy(), key=cascade_priority))
         document = DocumentLayout(nodes, WIDTH)

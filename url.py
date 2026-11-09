@@ -10,7 +10,7 @@ COOKIE_JAR = {}
 class URL:
     # (scheme, host, port) -> (socket, makefile 객체)
     connections = {}
-    # "scheme://host:port/path" -> (body, expiry). expiry가 None이면 무기한
+    # "scheme://host:port/path" -> (headers, body, expiry). expiry가 None이면 무기한
     cache = {}
 
     def __init__(self, url):
@@ -45,12 +45,14 @@ class URL:
             self.host, self.port = self.host.split(":", 1)
             self.port = int(self.port)
 
-    def request(self, payload=None, max_redirects=10):
+    def request(self, referrer, payload=None, max_redirects=10):
+        # referrer: 이 요청을 일으킨 페이지의 URL. 새 탭의 첫 페이지면 None이다.
+        # 반환값은 (응답 헤더, 본문)이다.
         if self.scheme == "data":
-            return self.data
+            return {}, self.data
 
         if self.scheme == "file":
-            return self.request_file()
+            return {}, self.request_file()
 
         # 빈 폼도 제출은 제출이므로 payload가 ""여도 POST로 본다
         method = "POST" if payload is not None else "GET"
@@ -59,9 +61,9 @@ class URL:
         now = time.time()
         # POST는 서버 상태를 바꾸는 요청이라 캐시에서 꺼내 주면 안 된다
         if method == "GET" and cache_key in URL.cache:
-            cached_body, expiry = URL.cache[cache_key]
+            cached_headers, cached_body, expiry = URL.cache[cache_key]
             if expiry is None or now < expiry:
-                return cached_body
+                return cached_headers, cached_body
             del URL.cache[cache_key]
 
         key = (self.scheme, self.host, self.port)
@@ -88,7 +90,15 @@ class URL:
             "User-Agent": "baesh",
         }
         if self.host in COOKIE_JAR:
-            headers["Cookie"] = COOKIE_JAR[self.host]
+            cookie, params = COOKIE_JAR[self.host]
+            # SameSite=Lax 쿠키는 다른 사이트에서 시작된 GET 아닌 요청(폼 POST
+            # 같은 것)에는 싣지 않는다. 링크 클릭 같은 GET에는 싣는다.
+            allow_cookie = True
+            if referrer and params.get("samesite", "none") == "lax":
+                if method != "GET":
+                    allow_cookie = self.host == referrer.host
+            if allow_cookie:
+                headers["Cookie"] = cookie
         if payload is not None:
             # POST에는 Content-Length가 필수다. 글자 수가 아니라 바이트 수라서
             # 한글처럼 여러 바이트인 문자가 있으면 len(payload)와 다르다.
@@ -112,7 +122,19 @@ class URL:
             response_headers[header.casefold()] = value.strip()
 
         if "set-cookie" in response_headers:
-            COOKIE_JAR[self.host] = response_headers["set-cookie"]
+            # "token=123; SameSite=Lax"를 값("token=123")과 속성으로 나눈다.
+            # 서버에 돌려보낼 때는 값만 보낸다.
+            cookie = response_headers["set-cookie"]
+            params = {}
+            if ";" in cookie:
+                cookie, rest = cookie.split(";", 1)
+                for param in rest.split(";"):
+                    if "=" in param:
+                        param, value = param.split("=", 1)
+                    else:
+                        value = "true"
+                    params[param.strip().casefold()] = value.casefold()
+            COOKIE_JAR[self.host] = (cookie, params)
 
         # 서버가 응답 후 연결을 끊겠다고 하면 소켓을 재사용 목록에서 뺀다.
         # HTTP/1.0 응답은 keep-alive를 명시하지 않는 한 끊는 것이 기본이다.
@@ -154,9 +176,11 @@ class URL:
                 )
             # POST 뒤의 리다이렉트는 GET으로 따라간다. 서버가 폼 처리 후 결과
             # 페이지로 보내는 흔한 패턴이 이것이다.
-            result_body = URL(location).request(max_redirects=max_redirects - 1)
+            result_headers, result_body = URL(location).request(
+                referrer, max_redirects=max_redirects - 1
+            )
         else:
-            result_body = body
+            result_headers, result_body = response_headers, body
 
         # Cache-Control이 없는 응답은 캐시하지 않는다. 예전에는 무기한 캐시했는데,
         # 그러면 폼 제출로 서버 내용이 바뀌어도 옛 페이지가 계속 나온다.
@@ -176,9 +200,9 @@ class URL:
                     # no-store를 포함해, max-age 외의 값이면 캐시하지 않음
                     should_cache = False
             if should_cache:
-                URL.cache[cache_key] = (result_body, expiry)
+                URL.cache[cache_key] = (result_headers, result_body, expiry)
 
-        return result_body
+        return result_headers, result_body
 
     def read_chunked(self, response):
         data = b""

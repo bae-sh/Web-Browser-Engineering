@@ -3,6 +3,9 @@ import socket
 import ssl
 import time
 
+# 호스트 → 쿠키. 탭이 아니라 브라우저 전체가 공유한다.
+COOKIE_JAR = {}
+
 
 class URL:
     # (scheme, host, port) -> (socket, makefile 객체)
@@ -84,6 +87,8 @@ class URL:
             #  Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 크롬은 매우 복잡
             "User-Agent": "baesh",
         }
+        if self.host in COOKIE_JAR:
+            headers["Cookie"] = COOKIE_JAR[self.host]
         if payload is not None:
             # POST에는 Content-Length가 필수다. 글자 수가 아니라 바이트 수라서
             # 한글처럼 여러 바이트인 문자가 있으면 len(payload)와 다르다.
@@ -105,6 +110,9 @@ class URL:
                 break
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
+
+        if "set-cookie" in response_headers:
+            COOKIE_JAR[self.host] = response_headers["set-cookie"]
 
         # 서버가 응답 후 연결을 끊겠다고 하면 소켓을 재사용 목록에서 뺀다.
         # HTTP/1.0 응답은 keep-alive를 명시하지 않는 한 끊는 것이 기본이다.

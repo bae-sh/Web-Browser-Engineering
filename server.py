@@ -1,10 +1,21 @@
+import random
 import socket
 import urllib.parse
 
 # 8장의 방명록 서버. 브라우저와 별개의 프로그램이다.
 # 실행: pytk server.py  →  브라우저에서 http://localhost:8000/
 
+# 주제 이름 → [(글, 쓴 사람)]
 ENTRIES = {"cooking": [], "cars": []}
+
+# 쿠키에 담긴 토큰 → 그 사용자의 세션 데이터. 데이터는 서버에 두고 쿠키에는
+# 이 표를 찾을 열쇠만 담는다. 쿠키는 사용자가 마음대로 고칠 수 있기 때문이다.
+SESSIONS = {}
+
+LOGINS = {
+    "crashoverride": "0cool",
+    "cerealkiller": "emmanuel",
+}
 
 
 def handle_connection(conx):
@@ -29,33 +40,59 @@ def handle_connection(conx):
     else:
         body = None
 
-    status, body = do_request(method, url, headers, body)
+    # 처음 온 방문자에게는 새 토큰을 만들어 준다. random.random()은 예측
+    # 가능해서 실제 서비스에서는 쓰면 안 된다(secrets 모듈 같은 것을 쓴다).
+    token = get_token(headers)
+    is_new_visitor = token is None
+    if is_new_visitor:
+        token = str(random.random())[2:]
+    session = SESSIONS.setdefault(token, {})
+
+    status, body = do_request(session, method, url, headers, body)
 
     response = "HTTP/1.0 {}\r\n".format(status)
     response += "Content-Length: {}\r\n".format(len(body.encode("utf8")))
+    if is_new_visitor:
+        # 다음 요청부터 이 토큰을 Cookie 헤더에 담아 보내 달라는 뜻
+        response += "Set-Cookie: token={}\r\n".format(token)
     response += "\r\n" + body
     conx.send(response.encode("utf8"))
     conx.close()
 
 
-def do_request(method, url, headers, body):
+def get_token(headers):
+    # Cookie 헤더는 "a=1; token=123; b=2"처럼 여러 쿠키를 담을 수 있다.
+    # 같은 localhost를 쓰는 다른 앱의 쿠키가 섞여 올 수도 있어서 쪼개서 찾는다.
+    for pair in headers.get("cookie", "").split(";"):
+        name, _, value = pair.strip().partition("=")
+        if name == "token" and value:
+            return value
+    return None
+
+
+def do_request(session, method, url, headers, body):
     parts = [part for part in url.split("/") if part]
     if method == "GET" and not parts:
-        return "200 OK", show_topics()
+        return "200 OK", show_topics(session)
+    elif method == "POST" and not parts:
+        # 로그인 폼은 /로 POST한다
+        return do_login(session, form_decode(body))
+    elif method == "GET" and parts == ["login"]:
+        return "200 OK", login_form(session)
     elif method == "GET" and parts in (["comment.js"], ["comment.css"]):
         with open(parts[0], encoding="utf8") as f:
             return "200 OK", f.read()
     elif method == "POST" and parts == ["new"]:
-        return "200 OK", add_topic(form_decode(body))
+        return "200 OK", add_topic(session, form_decode(body))
     elif method == "GET" and len(parts) == 1 and parts[0] in ENTRIES:
-        return "200 OK", show_topic(parts[0])
+        return "200 OK", show_topic(session, parts[0])
     elif (
         method == "POST"
         and len(parts) == 2
         and parts[0] in ENTRIES
         and parts[1] == "add"
     ):
-        return "200 OK", add_entry(form_decode(body), parts[0])
+        return "200 OK", add_entry(session, form_decode(body), parts[0])
     else:
         return "404 Not Found", not_found(url, method)
 
@@ -74,9 +111,42 @@ def form_decode(body):
     return params
 
 
-def show_topics():
+def login_form(session):
+    body = "<!doctype html>"
+    body += "<form action=/ method=post>"
+    body += "<p>Username: <input name=username></p>"
+    # 실제 브라우저는 type=password면 글자를 가려 보여 준다(연습문제 10-1)
+    body += "<p>Password: <input name=password type=password></p>"
+    body += "<p><button>Log in</button></p>"
+    body += "</form>"
+    return body
+
+
+def do_login(session, params):
+    username = params.get("username")
+    password = params.get("password")
+    # ==로 비밀번호를 비교하면 다른 글자를 만나는 순간 멈춰서, 걸린 시간으로
+    # 비밀번호를 짐작할 수 있다. 실제로는 hmac.compare_digest 같은 걸 쓴다.
+    if username in LOGINS and LOGINS[username] == password:
+        # 세션은 서버에 있으므로 사용자가 이 값을 직접 조작할 수 없다
+        session["user"] = username
+        return "200 OK", show_topics(session)
+    else:
+        out = "<!doctype html>"
+        out += "<h1>Invalid password for {}</h1>".format(username)
+        return "401 Unauthorized", out
+
+
+def login_status(session):
+    if "user" in session:
+        return "<p>Hello, " + session["user"] + "</p>"
+    return "<p><a href=/login>Sign in to write in the guest book</a></p>"
+
+
+def show_topics(session):
     out = "<!doctype html>"
     out += "<h1>Topics</h1>"
+    out += login_status(session)
     for topic in ENTRIES:
         out += "<p><a href=/{}>{}</a></p>".format(topic, topic)
     out += "<form action=/new method=post>"
@@ -86,35 +156,41 @@ def show_topics():
     return out
 
 
-def show_topic(topic):
+def show_topic(session, topic):
     out = "<!doctype html>"
     out += "<link rel=stylesheet href=/comment.css>"
     out += "<h1>" + topic + "</h1>"
     out += "<p><a href=/>Home</a></p>"
-    for entry in ENTRIES[topic]:
-        out += "<p>" + entry + "</p>"
-    out += "<form action=/{}/add method=post>".format(topic)
-    out += "<p><input name=guest></p>"
-    out += "<p><button>Sign the book!</button></p>"
-    out += "</form>"
-    # 처음엔 비어 있다가, 글이 너무 길면 comment.js가 경고를 써 넣는다
-    out += "<strong></strong>"
-    out += "<script src=/comment.js></script>"
+    out += login_status(session)
+    for entry, who in ENTRIES[topic]:
+        out += "<p>" + entry + "\n"
+        out += "<i>by " + who + "</i></p>"
+    if "user" in session:
+        out += "<form action=/{}/add method=post>".format(topic)
+        out += "<p><input name=guest></p>"
+        out += "<p><button>Sign the book!</button></p>"
+        out += "</form>"
+        # 처음엔 비어 있다가, 글이 너무 길면 comment.js가 경고를 써 넣는다.
+        # comment.js는 폼이 있다고 가정하므로 폼과 함께 보낸다.
+        out += "<strong></strong>"
+        out += "<script src=/comment.js></script>"
     return out
 
 
-def add_entry(params, topic):
-    # 자바스크립트를 안 돌리는 브라우저도 있으니 서버에서도 길이를 확인한다
-    if "guest" in params and len(params["guest"]) <= 100:
-        ENTRIES[topic].append(params["guest"])
-    return show_topic(topic)
+def add_entry(session, params, topic):
+    # 폼을 숨겼어도 누구나 직접 POST를 보낼 수 있으니 서버에서 다시 확인한다
+    if "user" in session:
+        # 자바스크립트를 안 돌리는 브라우저도 있으니 서버에서도 길이를 확인한다
+        if "guest" in params and len(params["guest"]) <= 100:
+            ENTRIES[topic].append((params["guest"], session["user"]))
+    return show_topic(session, topic)
 
 
-def add_topic(params):
+def add_topic(session, params):
     topic = params.get("topic", "")
     if topic not in ENTRIES:
         ENTRIES[topic] = []
-    return show_topics()
+    return show_topics(session)
 
 
 def not_found(url, method):

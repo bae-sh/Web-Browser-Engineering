@@ -23,6 +23,7 @@ class JSContext:
         self.interp.export_function("querySelectorAll", self.querySelectorAll)
         self.interp.export_function("getAttribute", self.getAttribute)
         self.interp.export_function("innerHTML_set", self.innerHTML_set)
+        self.interp.export_function("XMLHttpRequest_send", self.XMLHttpRequest_send)
 
         # Element는 파이썬에만 있는 객체라 자바스크립트로 넘길 수 없다.
         # 대신 숫자 핸들을 주고, 양방향 표로 노드와 핸들을 이어 둔다.
@@ -80,3 +81,8 @@ class JSContext:
             child.parent = elt
         # HTML 트리만 바뀌었으니 레이아웃 트리와 디스플레이 리스트를 다시 만든다
         self.tab.render()
+
+    def XMLHttpRequest_send(self, method, url, body):
+        # method는 쓰지 않는다. request()가 body 유무로 GET/POST를 정한다.
+        full_url = self.tab.url.resolve(url)
+        return full_url.request(body)

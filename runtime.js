@@ -50,6 +50,22 @@ Node.prototype.dispatchEvent = function(evt) {
     return evt.do_default;
 }
 
+// 동기 요청만 지원한다
+function XMLHttpRequest() {}
+
+XMLHttpRequest.prototype.open = function(method, url, is_async) {
+    if (is_async) throw Error("Asynchronous XHR is not supported");
+    this.method = method;
+    this.url = url;
+}
+
+XMLHttpRequest.prototype.send = function(body) {
+    this.responseText = call_python("XMLHttpRequest_send",
+        this.method, this.url, body);
+}
+
+// evaljs는 마지막 문장의 값을 파이썬으로 바꾸려 하는데 함수는 바꿀 수 없다.
+// 그래서 함수를 대입하는 문장이 맨 끝에 오지 않게 이것을 마지막에 둔다.
 Object.defineProperty(Node.prototype, 'innerHTML', {
     set: function(s) {
         call_python("innerHTML_set", this.handle, s.toString());

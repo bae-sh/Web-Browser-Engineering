@@ -216,6 +216,10 @@ class URL:
             body = "view-source:" + body
         return body
 
+    def origin(self):
+        # 출처(origin) = 스킴 + 호스트 + 포트. 경로는 따지지 않는다.
+        return self.scheme + "://" + self.host + ":" + str(self.port)
+
     def resolve(self, url):
         # <link href="...">처럼 페이지 안에 적힌 상대 URL을 절대 URL로 바꾼다.
         # 기준점은 self, 즉 그 링크가 적혀 있던 페이지의 URL이다.
